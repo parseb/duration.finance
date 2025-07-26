@@ -1,1 +1,1 @@
-testCreateCommitment|testIsExercisable|testLiquidateExpiredOption|testTakeOption
+test_RevertWhen_InsufficientPremium

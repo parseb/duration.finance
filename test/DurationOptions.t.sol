@@ -2,7 +2,6 @@
 pragma solidity 0.8.25;
 
 import {Test, console} from "forge-std/Test.sol";
-import {DurationToken} from "../src/DurationToken.sol";
 import {DurationOptions} from "../src/DurationOptions.sol";
 import {SettlementRouter} from "../src/SettlementRouter.sol";
 import {IDurationOptions} from "../src/interfaces/IDurationOptions.sol";
@@ -14,30 +13,34 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @notice Test suite for Duration.Finance options protocol
  */
 contract DurationOptionsTest is Test {
-    DurationToken public durToken;
     DurationOptions public options;
     SettlementRouter public settlement;
 
     address public constant WETH = 0x4200000000000000000000000000000000000006;
-    address public alice = makeAddr("alice");
-    address public bob = makeAddr("bob");
-    address public genesis = makeAddr("genesis");
-    address public admin = makeAddr("admin");
+    address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    uint256 public alicePrivateKey = 0x1;
+    uint256 public bobPrivateKey = 0x2;
+    uint256 public genesisPrivateKey = 0x3;
+    uint256 public adminPrivateKey = 0x4;
+    
+    address public alice = vm.addr(alicePrivateKey);
+    address public bob = vm.addr(bobPrivateKey);
+    address public genesis = vm.addr(genesisPrivateKey);
+    address public admin = vm.addr(adminPrivateKey);
 
     event OptionTaken(uint256 indexed optionId, bytes32 indexed commitmentHash, address indexed taker, uint256 amount, uint256 premium);
     event OptionExercised(uint256 indexed optionId, uint256 profit, uint256 protocolFee);
 
     function setUp() public {
         // Deploy contracts
-        durToken = new DurationToken(genesis, address(0));
         settlement = new SettlementRouter(address(0));
-        options = new DurationOptions(payable(address(durToken)), address(settlement), admin);
+        options = new DurationOptions(address(settlement), admin);
 
         // Setup test tokens and balances
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
         
-        // Mock WETH balances for testing
+        // Mock WETH and USDC balances for testing
         vm.mockCall(
             WETH,
             abi.encodeWithSelector(IERC20.balanceOf.selector, alice),
@@ -47,6 +50,11 @@ contract DurationOptionsTest is Test {
             WETH,
             abi.encodeWithSelector(IERC20.balanceOf.selector, address(options)),
             abi.encode(0)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.balanceOf.selector, bob),
+            abi.encode(100000 * 1e6) // 100k USDC
         );
     }
 
@@ -62,6 +70,20 @@ contract DurationOptionsTest is Test {
         vm.stopPrank();
     }
 
+    function testStoreAndRetrieveCommitment() public {
+        IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
+        bytes32 commitmentHash = _getCommitmentHash(commitment);
+        
+        vm.prank(alice);
+        options.storeCommitment(commitment);
+        
+        // Check if commitment was stored by trying to calculate premium
+        uint256 currentPrice = options.getCurrentPrice(WETH);
+        uint256 premium = options.calculatePremium(commitmentHash, currentPrice);
+        console.log("Premium:", premium);
+        assertGt(premium, 0);
+    }
+
     function testTakeOption() public {
         // Setup commitment
         IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
@@ -71,25 +93,50 @@ contract DurationOptionsTest is Test {
         vm.prank(alice);
         options.storeCommitment(commitment);
 
-        // Mock WETH transfer
+        // Mock WETH and USDC transfers
         vm.mockCall(
             WETH,
-            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 1 ether),
+            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 10 ether),
+            abi.encode(true)
+        );
+        
+        uint256 currentPrice = options.getCurrentPrice(WETH);
+        uint256 premium = options.calculatePremium(commitmentHash, currentPrice);
+        
+        // Mock USDC transfers for premium payment
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transferFrom.selector, bob, address(options), premium),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transfer.selector, alice, premium),
             abi.encode(true)
         );
 
         // Take option
         vm.startPrank(bob);
         
-        uint256 premium = options.calculatePremium(commitmentHash, 1 ether);
         console.log("Premium:", premium);
         
         vm.expectEmit(true, true, true, true);
-        emit OptionTaken(1, commitmentHash, bob, 1 ether, premium);
+        emit OptionTaken(1, commitmentHash, bob, 10 ether, premium);
         
-        uint256 optionId = options.takeOption{value: premium}(commitmentHash, 1 ether);
-        
-        assertEq(optionId, 1);
+        try options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL) returns (uint256 optionId) {
+            assertEq(optionId, 1);
+        } catch Error(string memory reason) {
+            console.log("Error reason:", reason);
+            revert("takeOption failed with error");
+        } catch (bytes memory lowLevelData) {
+            console.log("Low-level error, length:", lowLevelData.length);
+            if (lowLevelData.length >= 4) {
+                bytes4 selector = bytes4(lowLevelData);
+                console.log("Error selector:");
+                console.logBytes4(selector);
+            }
+            revert("takeOption failed with low-level error");
+        }
         
         vm.stopPrank();
     }
@@ -101,12 +148,13 @@ contract DurationOptionsTest is Test {
         vm.prank(alice);
         options.storeCommitment(commitment);
         
-        uint256 premium = options.calculatePremium(commitmentHash, 1 ether);
+        uint256 currentPrice = options.getCurrentPrice(WETH);
+        uint256 premium = options.calculatePremium(commitmentHash, currentPrice);
         
         // Premium should be |current_price - target_price| * amount
         // Mock current price is 3500e18, target is 4000e18
-        // Premium = (4000 - 3500) * 1 = 500 ETH
-        assertEq(premium, 500 ether);
+        // Premium = (4000 - 3500) * 10 = 5000 ETH (commitment amount is 10 ether)
+        assertEq(premium, 5000 ether);
     }
 
     function testIsExercisable() public {
@@ -129,7 +177,7 @@ contract DurationOptionsTest is Test {
         // Mock WETH transfer back to LP
         vm.mockCall(
             WETH,
-            abi.encodeWithSelector(IERC20.transfer.selector, alice, 1 ether),
+            abi.encodeWithSelector(IERC20.transfer.selector, alice, 10 ether),
             abi.encode(true)
         );
         
@@ -142,20 +190,79 @@ contract DurationOptionsTest is Test {
         assertEq(uint256(option.state), uint256(IDurationOptions.OptionState.EXPIRED));
     }
 
-    function testDurationTokenIntegration() public {
-        // Test DUR token minting
-        vm.startPrank(alice);
+    function testOwnershipTransfer() public {
+        // Test ownership transfer
+        vm.startPrank(admin);
         
-        uint256 mintAmount = durToken.mintFromETH{value: 1 ether}();
-        assertGt(mintAmount, 0);
+        // Check initial owner
+        assertEq(options.owner(), admin);
         
-        uint256 balance = durToken.balanceOf(alice);
-        assertEq(balance, mintAmount);
+        // Transfer ownership to genesis
+        options.transferOwnership(genesis);
+        assertEq(options.owner(), genesis);
         
         vm.stopPrank();
     }
 
-    function testFailTakeOptionInsufficientPremium() public {
+    function testSweepExcess() public {
+        // Test sweeping excess ETH and tokens
+        vm.startPrank(admin);
+        
+        // Send some ETH to contract (simulating leftover fees)
+        vm.deal(address(options), 1 ether);
+        
+        uint256 ownerBalanceBefore = admin.balance;
+        
+        // Sweep excess ETH
+        options.sweepExcess(address(0));
+        
+        // Check ETH was transferred to owner
+        assertEq(address(options).balance, 0);
+        assertEq(admin.balance, ownerBalanceBefore + 1 ether);
+        
+        vm.stopPrank();
+    }
+
+    function testTakerCommitment() public {
+        // Create a taker commitment (Bob wants to buy an option)
+        IDurationOptions.OptionCommitment memory takerCommitment = _createTestTakerCommitment();
+        bytes32 commitmentHash = _getCommitmentHash(takerCommitment);
+        
+        // Store commitment
+        vm.prank(bob);
+        options.storeCommitment(takerCommitment);
+        
+        // Mock USDC and WETH transfers for LP taking taker commitment
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transferFrom.selector, bob, address(options), 500 ether),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transfer.selector, alice, 500 ether),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 10 ether),
+            abi.encode(true)
+        );
+        
+        // LP (alice) takes the taker commitment
+        vm.startPrank(alice);
+        uint256 optionId = options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL);
+        vm.stopPrank();
+        
+        // Verify option was created correctly
+        IDurationOptions.ActiveOption memory option = options.getOption(optionId);
+        assertEq(option.taker, bob); // Bob is the taker
+        assertEq(option.lp, alice); // Alice is the LP
+        assertEq(option.premium, 500 ether); // Premium is what taker specified
+        assertEq(option.targetPrice, 3500e18); // Target price = current price for taker commitments
+    }
+
+    function test_RevertWhen_InsufficientPremium() public {
         IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
         bytes32 commitmentHash = _getCommitmentHash(commitment);
         
@@ -164,14 +271,27 @@ contract DurationOptionsTest is Test {
         
         vm.mockCall(
             WETH,
-            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 1 ether),
+            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 10 ether),
             abi.encode(true)
         );
         
         vm.startPrank(bob);
         
-        // Try to take option with insufficient premium
-        options.takeOption{value: 1 ether}(commitmentHash, 1 ether); // Should fail
+        // Don't mock USDC transfer - let it fail naturally when insufficient balance
+        // or mock the exact calculated premium transfer to fail
+        uint256 currentPrice = options.getCurrentPrice(WETH);
+        uint256 requiredPremium = options.calculatePremium(commitmentHash, currentPrice);
+        
+        // Mock USDC transfer to fail for the required premium amount
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transferFrom.selector, bob, address(options), requiredPremium),
+            abi.encode(false) // Transfer fails
+        );
+        
+        // Try to take option with insufficient premium - should revert
+        vm.expectRevert(); // SafeERC20FailedOperation will be thrown
+        options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL);
         
         vm.stopPrank();
     }
@@ -185,7 +305,7 @@ contract DurationOptionsTest is Test {
         options.storeCommitment(commitment);
         
         vm.startPrank(bob);
-        options.takeOption{value: 1000 ether}(commitmentHash, 1 ether); // Should fail
+        options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL); // Should fail
         vm.stopPrank();
     }
 
@@ -194,28 +314,88 @@ contract DurationOptionsTest is Test {
     function _createTestCommitment() internal view returns (IDurationOptions.OptionCommitment memory) {
         return IDurationOptions.OptionCommitment({
             lp: alice,
+            taker: address(0),
             asset: WETH,
             amount: 10 ether,
             targetPrice: 4000e18, // $4000
-            maxDuration: 1 days,
-            fractionable: true,
+            premium: 0, // LP doesn't set premium
+            durationDays: 1, // 1 day
+            optionType: IDurationOptions.OptionType.CALL,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            signature: hex"" // Empty for testing
+            signature: _createValidSignature()
         });
     }
 
-    function _getCommitmentHash(IDurationOptions.OptionCommitment memory commitment) internal pure returns (bytes32) {
-        return keccak256(abi.encode(
+    function _createTestTakerCommitment() internal view returns (IDurationOptions.OptionCommitment memory) {
+        return IDurationOptions.OptionCommitment({
+            lp: address(0),
+            taker: bob,
+            asset: WETH,
+            amount: 10 ether,
+            targetPrice: 0, // Taker doesn't set target price
+            premium: 500 ether, // Taker specifies premium willing to pay in USDC
+            durationDays: 1, // 1 day
+            optionType: IDurationOptions.OptionType.CALL,
+            expiry: block.timestamp + 1 hours,
+            nonce: 1,
+            signature: _createValidTakerSignature()
+        });
+    }
+
+    function _createValidSignature() internal view returns (bytes memory) {
+        // Get the typed data hash using the contract's method
+        bytes32 digest = options.getCommitmentHash(
+            alice,
+            address(0),
+            WETH,
+            10 ether,
+            4000e18,
+            0, // premium
+            1, // durationDays
+            uint8(IDurationOptions.OptionType.CALL),
+            block.timestamp + 1 hours,
+            1
+        );
+        
+        // Create signature using alice's private key
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _createValidTakerSignature() internal view returns (bytes memory) {
+        // Get the typed data hash using the contract's method
+        bytes32 digest = options.getCommitmentHash(
+            address(0),
+            bob,
+            WETH,
+            10 ether,
+            0, // targetPrice
+            500 ether, // premium
+            1, // durationDays
+            uint8(IDurationOptions.OptionType.CALL),
+            block.timestamp + 1 hours,
+            1
+        );
+        
+        // Create signature using bob's private key
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(bobPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _getCommitmentHash(IDurationOptions.OptionCommitment memory commitment) internal view returns (bytes32) {
+        return options.getCommitmentHash(
             commitment.lp,
+            commitment.taker,
             commitment.asset,
             commitment.amount,
             commitment.targetPrice,
-            commitment.maxDuration,
-            commitment.fractionable,
+            commitment.premium,
+            commitment.durationDays,
+            uint8(commitment.optionType),
             commitment.expiry,
             commitment.nonce
-        ));
+        );
     }
 
     function _setupAndTakeOption() internal returns (uint256 optionId) {
@@ -227,13 +407,27 @@ contract DurationOptionsTest is Test {
         
         vm.mockCall(
             WETH,
-            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 1 ether),
+            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 10 ether),
+            abi.encode(true)
+        );
+        
+        uint256 currentPrice = options.getCurrentPrice(WETH);
+        uint256 premium = options.calculatePremium(commitmentHash, currentPrice);
+        
+        // Mock USDC transfers
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transferFrom.selector, bob, address(options), premium),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transfer.selector, alice, premium),
             abi.encode(true)
         );
         
         vm.startPrank(bob);
-        uint256 premium = options.calculatePremium(commitmentHash, 1 ether);
-        optionId = options.takeOption{value: premium}(commitmentHash, 1 ether);
+        optionId = options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL);
         vm.stopPrank();
     }
 }

@@ -10,6 +10,10 @@ interface PriceResponse {
   error?: string;
 }
 
+interface OneInchPriceResponse {
+  [tokenAddress: string]: string; // Price in WEI
+}
+
 interface SettlementQuoteRequest {
   tokenIn: string;
   tokenOut: string;
@@ -28,50 +32,163 @@ interface SettlementQuoteResponse {
   error?: string;
 }
 
-// Mock price data - in production, integrate with 1inch Oracle or other price feeds
-const mockPrices = {
-  '0x4200000000000000000000000000000000000006': { // WETH on Base
-    price: 3500,
-    timestamp: Date.now(),
-    source: '1inch_oracle',
-  },
-  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': { // USDC on Base
-    price: 1,
-    timestamp: Date.now(),
-    source: '1inch_oracle',
-  },
-  '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb': { // DAI on Base
-    price: 1,
-    timestamp: Date.now(),
-    source: '1inch_oracle',
-  },
+// In-memory cache for 1inch prices
+interface PriceCache {
+  prices: Record<string, {
+    price: number;
+    timestamp: number;
+    source: string;
+  }>;
+  lastUpdate: number;
+  isRefreshing: boolean;
+}
+
+const priceCache: PriceCache = {
+  prices: {},
+  lastUpdate: 0,
+  isRefreshing: false,
 };
+
+const CACHE_DURATION = 3000; // 3 seconds
+const BASE_CHAIN_ID = process.env.NODE_ENV === 'production' ? 8453 : 84532; // Base mainnet or Base testnet
+
+// Base token addresses we support
+const SUPPORTED_TOKENS = {
+  WETH: '0x4200000000000000000000000000000000000006',
+  USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  DAI: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+};
+
+// Fallback prices in case 1inch API fails
+const fallbackPrices = {
+  [SUPPORTED_TOKENS.WETH]: 3500, // ETH price in USD
+  [SUPPORTED_TOKENS.USDC]: 1, // USDC is pegged to USD
+  [SUPPORTED_TOKENS.DAI]: 1, // DAI is pegged to USD
+};
+
+/**
+ * Fetch prices from 1inch API with proper error handling
+ */
+async function fetchPricesFrom1inch(tokens: string[]): Promise<Record<string, number>> {
+  const apiKey = process.env.ONEINCH_API_KEY;
+  
+  if (!apiKey) {
+    console.warn('1inch API key not found, using fallback prices');
+    const fallbackResult: Record<string, number> = {};
+    tokens.forEach(token => {
+      fallbackResult[token] = fallbackPrices[token as keyof typeof fallbackPrices] || 1;
+    });
+    return fallbackResult;
+  }
+
+  try {
+    // Use the GET endpoint for multiple addresses
+    const tokensParam = tokens.join(',');
+    const url = `https://api.1inch.dev/price/v1.1/${BASE_CHAIN_ID}/${tokensParam}`;
+    
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`1inch API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data: OneInchPriceResponse = await response.json();
+    
+    // Convert WEI prices to USD prices (1inch returns prices in WEI relative to USD)
+    const result: Record<string, number> = {};
+    Object.entries(data).forEach(([token, priceWei]) => {
+      // Convert from WEI to USD (divide by 1e18)
+      result[token] = parseFloat(priceWei) / 1e18;
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Error fetching prices from 1inch:', error);
+    
+    // Return fallback prices on error
+    const fallbackResult: Record<string, number> = {};
+    tokens.forEach(token => {
+      fallbackResult[token] = fallbackPrices[token as keyof typeof fallbackPrices] || 1;
+    });
+    return fallbackResult;
+  }
+}
+
+/**
+ * Update price cache if needed
+ */
+async function updatePriceCache(): Promise<void> {
+  const now = Date.now();
+  
+  // Check if cache is still valid
+  if (now - priceCache.lastUpdate < CACHE_DURATION) {
+    return;
+  }
+
+  // Prevent multiple simultaneous updates
+  if (priceCache.isRefreshing) {
+    return;
+  }
+
+  priceCache.isRefreshing = true;
+
+  try {
+    const tokens = Object.values(SUPPORTED_TOKENS);
+    const prices = await fetchPricesFrom1inch(tokens);
+    
+    // Update cache
+    Object.entries(prices).forEach(([token, price]) => {
+      priceCache.prices[token] = {
+        price,
+        timestamp: now,
+        source: '1inch_api',
+      };
+    });
+    
+    priceCache.lastUpdate = now;
+    console.log('Price cache updated successfully');
+  } catch (error) {
+    console.error('Failed to update price cache:', error);
+  } finally {
+    priceCache.isRefreshing = false;
+  }
+}
 
 // GET /api/price - Get current prices for assets
 export async function GET(request: NextRequest): Promise<NextResponse<PriceResponse>> {
   try {
+    // Trigger cache update (non-blocking if cache is fresh)
+    updatePriceCache().catch(error => 
+      console.error('Background cache update failed:', error)
+    );
+
     const { searchParams } = new URL(request.url);
-    const assets = searchParams.get('assets')?.split(',') || Object.keys(mockPrices);
+    const requestedAssets = searchParams.get('assets')?.split(',') || Object.values(SUPPORTED_TOKENS);
 
     const prices: Record<string, { price: number; timestamp: number; source: string }> = {};
 
-    for (const asset of assets) {
+    for (const asset of requestedAssets) {
       const normalizedAsset = asset.toLowerCase();
       
-      // Check if we have mock data for this asset
-      const mockData = Object.entries(mockPrices).find(
+      // Check cache first
+      const cachedPrice = Object.entries(priceCache.prices).find(
         ([address]) => address.toLowerCase() === normalizedAsset
       );
 
-      if (mockData) {
-        prices[asset] = mockData[1];
+      if (cachedPrice) {
+        prices[asset] = cachedPrice[1];
       } else {
-        // In production, would call 1inch Oracle API or other price feeds
-        // For now, return default price
+        // Use fallback price if not in cache
+        const fallbackPrice = fallbackPrices[asset as keyof typeof fallbackPrices] || 1;
         prices[asset] = {
-          price: 1,
+          price: fallbackPrice,
           timestamp: Date.now(),
-          source: 'mock',
+          source: 'fallback',
         };
       }
     }
@@ -101,9 +218,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<Settlemen
       );
     }
 
-    // Mock settlement quote calculation
-    const tokenInPrice = mockPrices[body.tokenIn as keyof typeof mockPrices]?.price || 1;
-    const tokenOutPrice = mockPrices[body.tokenOut as keyof typeof mockPrices]?.price || 1;
+    // Use cached prices for settlement quote calculation
+    const tokenInPrice = priceCache.prices[body.tokenIn]?.price || fallbackPrices[body.tokenIn as keyof typeof fallbackPrices] || 1;
+    const tokenOutPrice = priceCache.prices[body.tokenOut]?.price || fallbackPrices[body.tokenOut as keyof typeof fallbackPrices] || 1;
     
     const baseAmountOut = (body.amountIn * tokenInPrice) / tokenOutPrice;
     
@@ -206,7 +323,7 @@ export async function getHistory(request: NextRequest) {
     const intervals = timeframe === '24h' ? 24 : timeframe === '7d' ? 168 : 720; // hours
     const intervalMs = 3600000; // 1 hour
     
-    const basePrice = mockPrices[asset as keyof typeof mockPrices]?.price || 3500;
+    const basePrice = priceCache.prices[asset]?.price || fallbackPrices[asset as keyof typeof fallbackPrices] || 3500;
     
     const historicalData = Array.from({ length: intervals }, (_, i) => {
       const timestamp = now - (intervals - i - 1) * intervalMs;

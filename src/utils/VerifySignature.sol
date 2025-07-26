@@ -14,74 +14,85 @@ contract VerifySignature is EIP712 {
     using ECDSA for bytes32;
 
     bytes32 public constant OPTION_COMMITMENT_TYPEHASH = keccak256(
-        "OptionCommitment(address lp,address asset,uint256 amount,uint256 targetPrice,uint256 maxDuration,bool fractionable,uint256 expiry,uint256 nonce)"
+        "OptionCommitment(address lp,address taker,address asset,uint256 amount,uint256 targetPrice,uint256 premium,uint256 durationDays,uint8 optionType,uint256 expiry,uint256 nonce)"
     );
 
     constructor() EIP712("Duration.Finance", "1.0") {}
 
     /**
-     * @notice Verify LP commitment signature
-     * @param lp Liquidity provider address
+     * @notice Verify commitment signature (LP or Taker)
+     * @param lp Liquidity provider address (0x0 for taker commitments)
+     * @param taker Taker address (0x0 for LP commitments)
      * @param asset Underlying asset address
      * @param amount Amount of asset
-     * @param targetPrice LP's target price
-     * @param maxDuration Maximum option duration
-     * @param fractionable Whether position is fractionable
+     * @param targetPrice LP's target price (0 for taker commitments)
+     * @param premium Taker's offered premium (0 for LP commitments)
+     * @param durationDays Option duration in days
+     * @param optionType Option type (CALL or PUT)
      * @param expiry Commitment expiry timestamp
      * @param nonce Unique nonce for commitment
-     * @param signature EIP-712 signature from LP
+     * @param signature EIP-712 signature
      * @return isValid True if signature is valid
      */
     function verifyCommitmentSignature(
         address lp,
+        address taker,
         address asset,
         uint256 amount,
         uint256 targetPrice,
-        uint256 maxDuration,
-        bool fractionable,
+        uint256 premium,
+        uint256 durationDays,
+        uint8 optionType,
         uint256 expiry,
         uint256 nonce,
         bytes memory signature
     ) public view returns (bool isValid) {
-        bytes32 structHash = keccak256(
-            abi.encode(
-                OPTION_COMMITMENT_TYPEHASH,
-                lp,
-                asset,
-                amount,
-                targetPrice,
-                maxDuration,
-                fractionable,
-                expiry,
-                nonce
-            )
+        bytes32 digest = getCommitmentHash(
+            lp,
+            taker,
+            asset,
+            amount,
+            targetPrice,
+            premium,
+            durationDays,
+            optionType,
+            expiry,
+            nonce
         );
-
-        bytes32 digest = _hashTypedDataV4(structHash);
+        
         address signer = digest.recover(signature);
         
-        return signer == lp && signer != address(0);
+        // Verify signer is either the LP or Taker (whoever is non-zero)
+        if (lp != address(0)) {
+            return signer == lp;
+        } else {
+            return signer == taker && taker != address(0);
+        }
     }
 
     /**
      * @notice Get typed data hash for commitment
-     * @param lp Liquidity provider address
+     * @param lp Liquidity provider address (0x0 for taker commitments)
+     * @param taker Taker address (0x0 for LP commitments)
      * @param asset Underlying asset address
      * @param amount Amount of asset
-     * @param targetPrice LP's target price
-     * @param maxDuration Maximum option duration
-     * @param fractionable Whether position is fractionable
+     * @param targetPrice LP's target price (0 for taker commitments)
+     * @param premium Taker's offered premium (0 for LP commitments)
+     * @param durationDays Option duration in days
+     * @param optionType Option type (CALL or PUT)
      * @param expiry Commitment expiry timestamp
      * @param nonce Unique nonce for commitment
      * @return hash Typed data hash for signing
      */
     function getCommitmentHash(
         address lp,
+        address taker,
         address asset,
         uint256 amount,
         uint256 targetPrice,
-        uint256 maxDuration,
-        bool fractionable,
+        uint256 premium,
+        uint256 durationDays,
+        uint8 optionType,
         uint256 expiry,
         uint256 nonce
     ) public view returns (bytes32 hash) {
@@ -89,11 +100,13 @@ contract VerifySignature is EIP712 {
             abi.encode(
                 OPTION_COMMITMENT_TYPEHASH,
                 lp,
+                taker,
                 asset,
                 amount,
                 targetPrice,
-                maxDuration,
-                fractionable,
+                premium,
+                durationDays,
+                optionType,
                 expiry,
                 nonce
             )

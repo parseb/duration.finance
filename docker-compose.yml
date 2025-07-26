@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: duration-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: duration_finance
+      POSTGRES_USER: duration_user
+      POSTGRES_PASSWORD: duration_secure_password_2024
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - duration-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U duration_user -d duration_finance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache (for price caching and sessions)
+  redis:
+    image: redis:7-alpine
+    container_name: duration-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - duration-network
+    command: redis-server --appendonly yes --requirepass redis_secure_password_2024
+
+  # Duration.Finance Next.js App
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: duration-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Database
+      DATABASE_URL: postgresql://duration_user:duration_secure_password_2024@postgres:5432/duration_finance
+      
+      # Redis
+      REDIS_URL: redis://:redis_secure_password_2024@redis:6379
+      
+      # Copy from .env file
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      BASE_RPC_URL: ${BASE_RPC_URL}
+      BASE_TESTNET_RPC_URL: ${BASE_TESTNET_RPC_URL}
+      BASESCAN_API_KEY: ${BASESCAN_API_KEY}
+      ONEINCH_API_KEY: ${ONEINCH_API_KEY}
+      ONEINCH_API_URL: ${ONEINCH_API_URL}
+      JWT_SECRET: ${JWT_SECRET:-jwt_development_secret_key_2024}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-development_encryption_key_32char}
+      
+      # Frontend variables
+      NEXT_PUBLIC_ONCHAINKIT_PROJECT_NAME: ${NEXT_PUBLIC_ONCHAINKIT_PROJECT_NAME}
+      NEXT_PUBLIC_URL: ${NEXT_PUBLIC_URL}
+      NEXT_PUBLIC_ICON_URL: ${NEXT_PUBLIC_ICON_URL}
+      NEXT_PUBLIC_ONCHAINKIT_API_KEY: ${NEXT_PUBLIC_ONCHAINKIT_API_KEY}
+      
+      # Container-specific
+      NODE_ENV: production
+      PORT: 3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - duration-network
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  duration-network:
+    driver: bridge

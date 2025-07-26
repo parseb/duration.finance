@@ -9,7 +9,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IDurationOptions} from "./interfaces/IDurationOptions.sol";
 import {ISettlementRouter} from "./interfaces/I1inch.sol";
 import {VerifySignature} from "./utils/VerifySignature.sol";
-import {DurationToken} from "./DurationToken.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title DurationOptions
@@ -17,27 +17,24 @@ import {DurationToken} from "./DurationToken.sol";
  * @notice Core options protocol with 1inch settlement integration
  * @dev Complete rewrite based on GHOptim timing logic, no Aave dependencies
  */
-contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, Pausable {
+contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, Pausable, Ownable {
     using SafeERC20 for IERC20;
 
     // Constants
     uint256 public constant MIN_OPTION_SIZE = 0.1 ether; // 0.1 units minimum
     uint256 public constant MAX_OPTION_SIZE = 1000 ether; // 1000 units maximum
-    uint256 public constant MIN_DURATION = 1 days;
-    uint256 public constant MAX_DURATION = 365 days;
     address public constant WETH = 0x4200000000000000000000000000000000000006; // Base WETH
+    address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // Base USDC
 
     // State
-    DurationToken public immutable durToken;
     ISettlementRouter public settlementRouter;
-    address public admin;
     uint256 public optionCounter;
     uint256 public safetyMargin = 100; // 0.01% in basis points
 
     // Storage
     mapping(bytes32 => OptionCommitment) public commitments;
     mapping(uint256 => ActiveOption) public activeOptions;
-    mapping(address => uint256) public lpNonces;
+    mapping(address => uint256) public nonces;
     mapping(address => bool) public allowedAssets;
     mapping(address => uint256) public totalLocked; // Total amount locked per asset
 
@@ -56,55 +53,67 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
     error SettlementFailed();
     error InsufficientAllowance();
 
-    modifier onlyAdmin() {
-        if (msg.sender != admin) revert UnauthorizedCaller();
-        _;
-    }
 
-    modifier onlyDurToken() {
-        if (msg.sender != address(durToken)) revert UnauthorizedCaller();
-        _;
-    }
 
     constructor(
-        address payable _durToken,
         address _settlementRouter,
-        address _admin
-    ) VerifySignature() {
-        durToken = DurationToken(_durToken);
+        address _initialOwner
+    ) VerifySignature() Ownable(_initialOwner) {
         settlementRouter = ISettlementRouter(_settlementRouter);
-        admin = _admin;
         
         // Initially allow WETH
         allowedAssets[WETH] = true;
     }
 
     /**
-     * @notice Create LP commitment (off-chain, signature only)
+     * @notice Create commitment (LP or Taker)
      * @param commitment The option commitment struct
      * @dev This function validates but doesn't store - used for verification
      */
     function createCommitment(OptionCommitment calldata commitment) external override {
-        // Validate commitment parameters
-        if (commitment.lp != msg.sender) revert InvalidCommitment();
+        // Determine if this is LP or Taker commitment
+        bool isLpCommitment = commitment.lp != address(0);
+        bool isTakerCommitment = commitment.taker != address(0);
+        
+        // Must be either LP or Taker, but not both
+        if (!((isLpCommitment && !isTakerCommitment) || (!isLpCommitment && isTakerCommitment))) revert InvalidCommitment();
+        
+        // Validate sender
+        address expectedSender = isLpCommitment ? commitment.lp : commitment.taker;
+        if (expectedSender != msg.sender) revert InvalidCommitment();
+        
+        // Common validations
         if (!allowedAssets[commitment.asset]) revert InvalidAsset();
         if (commitment.amount < MIN_OPTION_SIZE || commitment.amount > MAX_OPTION_SIZE) {
             revert InvalidAmount();
         }
-        if (commitment.maxDuration < MIN_DURATION || commitment.maxDuration > MAX_DURATION) {
+        if (commitment.durationDays == 0 || commitment.durationDays > 365) {
             revert InvalidDuration();
         }
         if (commitment.expiry <= block.timestamp) revert CommitmentExpired();
-        if (commitment.targetPrice == 0) revert InvalidCommitment();
+        
+        // LP-specific validations
+        if (isLpCommitment) {
+            if (commitment.targetPrice == 0) revert InvalidCommitment();
+            if (commitment.premium != 0) revert InvalidCommitment(); // LP doesn't set premium
+        }
+        
+        // Taker-specific validations  
+        if (isTakerCommitment) {
+            if (commitment.premium == 0) revert InvalidCommitment(); // Taker must set premium
+            if (commitment.targetPrice != 0) revert InvalidCommitment(); // Taker doesn't set target price
+        }
 
         // Verify signature
         bool isValid = verifyCommitmentSignature(
             commitment.lp,
+            commitment.taker,
             commitment.asset,
             commitment.amount,
             commitment.targetPrice,
-            commitment.maxDuration,
-            commitment.fractionable,
+            commitment.premium,
+            commitment.durationDays,
+            uint8(commitment.optionType),
             commitment.expiry,
             commitment.nonce,
             commitment.signature
@@ -113,65 +122,103 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         if (!isValid) revert InvalidCommitment();
 
         bytes32 commitmentHash = _getCommitmentHash(commitment);
-        emit CommitmentCreated(commitmentHash, commitment.lp, commitment.asset, commitment.amount);
+        address creator = isLpCommitment ? commitment.lp : commitment.taker;
+        emit CommitmentCreated(commitmentHash, creator, commitment.asset, commitment.amount);
     }
 
     /**
-     * @notice Take an option position
-     * @param commitmentHash Hash of the LP commitment
-     * @param amount Amount to take (must be <= commitment amount)
-     * @return optionId The created option ID
+     * @notice Take a commitment (LP or Taker)
+     * @param commitmentHash Hash of the commitment  
+     * @param optionType CALL or PUT (used only if LP didn't specify)
+     * @return optionId The created option ID (0 if simple swap executed)
      */
-    function takeOption(
+    function takeCommitment(
         bytes32 commitmentHash,
-        uint256 amount
-    ) external payable override nonReentrant whenNotPaused returns (uint256 optionId) {
-        // Load commitment (should be passed from frontend)
+        OptionType optionType
+    ) external override nonReentrant whenNotPaused returns (uint256 optionId) {
+        // Load commitment
         OptionCommitment memory commitment = commitments[commitmentHash];
-        if (commitment.lp == address(0)) revert CommitmentNotFound();
+        
+        // Validate commitment exists
+        bool isLpCommitment = commitment.lp != address(0);
+        bool isTakerCommitment = commitment.taker != address(0);
+        if (!((isLpCommitment && !isTakerCommitment) || (!isLpCommitment && isTakerCommitment))) revert CommitmentNotFound();
+        
         if (commitment.expiry <= block.timestamp) revert CommitmentExpired();
-        if (amount < MIN_OPTION_SIZE) revert InvalidAmount();
-        if (!commitment.fractionable && amount != commitment.amount) revert InvalidAmount();
-        if (amount > commitment.amount) revert InvalidAmount();
+        if (commitment.amount < MIN_OPTION_SIZE) revert InvalidAmount();
 
-        // Calculate premium
-        uint256 premium = calculatePremium(commitmentHash, amount);
-        if (msg.value < premium) revert InsufficientPremium();
-
-        // Transfer LP asset to protocol
-        IERC20(commitment.asset).safeTransferFrom(commitment.lp, address(this), amount);
-        totalLocked[commitment.asset] += amount;
-
-        // Determine option type based on current price vs target price
+        // Get current price
         uint256 currentPrice = getCurrentPrice(commitment.asset);
-        OptionType optionType = currentPrice < commitment.targetPrice ? OptionType.CALL : OptionType.PUT;
+        uint256 finalTargetPrice;
+        uint256 premium;
+        address optionTaker;
+        address lpAddress;
+
+        if (isLpCommitment) {
+            // LP commitment being taken by taker
+            optionTaker = msg.sender;
+            lpAddress = commitment.lp;
+            finalTargetPrice = commitment.targetPrice;
+            
+            // Check if current price is better than LP target - if so, do simple swap  
+            if (currentPrice > commitment.targetPrice) {
+                _executeSimpleSwap(commitment, currentPrice);
+                delete commitments[commitmentHash];
+                return 0; // Simple swap executed
+            }
+            
+            // Calculate premium for LP commitment
+            premium = calculatePremium(commitmentHash, currentPrice);
+            
+            // Transfer USDC premium from taker to protocol
+            IERC20(USDC).safeTransferFrom(msg.sender, address(this), premium);
+            
+            // Transfer LP asset to protocol for collateral
+            IERC20(commitment.asset).safeTransferFrom(commitment.lp, address(this), commitment.amount);
+            
+        } else {
+            // Taker commitment being taken by LP
+            optionTaker = commitment.taker;
+            lpAddress = msg.sender;
+            finalTargetPrice = currentPrice; // Target price = current price for taker commitments
+            premium = commitment.premium; // Premium already specified by taker
+            
+            // Transfer USDC premium from taker to protocol (taker already committed to this)
+            IERC20(USDC).safeTransferFrom(commitment.taker, address(this), premium);
+            
+            // Transfer LP asset to protocol for collateral  
+            IERC20(commitment.asset).safeTransferFrom(msg.sender, address(this), commitment.amount);
+        }
+
+        // Update locked amount
+        totalLocked[commitment.asset] += commitment.amount;
+
+        // Determine final option type
+        OptionType finalOptionType = commitment.optionType;
 
         // Create active option
         optionId = ++optionCounter;
         activeOptions[optionId] = ActiveOption({
             commitmentHash: commitmentHash,
-            taker: msg.sender,
-            lp: commitment.lp,
+            taker: optionTaker,
+            lp: lpAddress,
             asset: commitment.asset,
-            amount: amount,
-            targetPrice: commitment.targetPrice,
+            amount: commitment.amount,
+            targetPrice: finalTargetPrice,
             premium: premium,
-            exerciseDeadline: block.timestamp + commitment.maxDuration,
-            optionType: optionType,
+            exerciseDeadline: block.timestamp + (commitment.durationDays * 1 days),
+            currentPrice: currentPrice,
+            optionType: finalOptionType,
             state: OptionState.TAKEN
         });
 
-        // Send premium to LP
-        (bool success,) = payable(commitment.lp).call{value: premium}("");
-        require(success, "Premium transfer failed");
+        // Send USDC premium to LP
+        IERC20(USDC).safeTransfer(lpAddress, premium);
 
-        // Return excess ETH to taker
-        if (msg.value > premium) {
-            (success,) = payable(msg.sender).call{value: msg.value - premium}("");
-            require(success, "Excess refund failed");
-        }
+        // Remove commitment as it's been taken
+        delete commitments[commitmentHash];
 
-        emit OptionTaken(optionId, commitmentHash, msg.sender, amount, premium);
+        emit OptionTaken(optionId, commitmentHash, optionTaker, commitment.amount, premium);
     }
 
     /**
@@ -210,9 +257,10 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         // Calculate protocol fee
         uint256 protocolFee = (profit * safetyMargin) / 10000;
         
-        // Send revenue to DUR token
+        // Send protocol fee to owner
         if (protocolFee > 0) {
-            durToken.receiveProtocolRevenue{value: protocolFee}();
+            (bool success,) = payable(owner()).call{value: protocolFee}("");
+            require(success, "Protocol fee transfer failed");
         }
 
         emit OptionExercised(optionId, profit, protocolFee);
@@ -240,21 +288,20 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
     /**
      * @notice Calculate premium for taking option
      * @param commitmentHash Hash of commitment
-     * @param amount Amount to take
-     * @return premium Premium to pay in ETH
+     * @param currentPrice Current asset price
+     * @return premium Premium to pay in USDC
      */
     function calculatePremium(
         bytes32 commitmentHash,
-        uint256 amount
+        uint256 currentPrice
     ) public view override returns (uint256 premium) {
         OptionCommitment memory commitment = commitments[commitmentHash];
-        uint256 currentPrice = getCurrentPrice(commitment.asset);
         
         // Premium = |Current Price - Target Price| * Amount
         if (currentPrice > commitment.targetPrice) {
-            premium = ((currentPrice - commitment.targetPrice) * amount) / 1e18;
+            premium = ((currentPrice - commitment.targetPrice) * commitment.amount) / 1e18;
         } else {
-            premium = ((commitment.targetPrice - currentPrice) * amount) / 1e18;
+            premium = ((commitment.targetPrice - currentPrice) * commitment.amount) / 1e18;
         }
     }
 
@@ -358,39 +405,57 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
     }
 
     /**
+     * @notice Execute simple swap when current price is better than LP target
+     * @param commitment The LP commitment
+     * @param currentPrice Current asset price
+     */
+    function _executeSimpleSwap(
+        OptionCommitment memory commitment,
+        uint256 currentPrice
+    ) internal {
+        // Transfer LP asset to protocol
+        IERC20(commitment.asset).safeTransferFrom(commitment.lp, address(this), commitment.amount);
+        
+        // Calculate LP payout at their target price
+        uint256 lpPayout = (commitment.targetPrice * commitment.amount) / 1e18;
+        
+        // Send LP their target price worth in USDC (assuming 1:1 USDC:USD)
+        IERC20(USDC).safeTransfer(commitment.lp, lpPayout);
+        
+        // Note: LP asset remains in contract as protocol revenue
+        // Will be available for sweep via sweepExcess function
+        
+        emit OptionTaken(0, keccak256(abi.encode(commitment)), commitment.lp, commitment.amount, 0);
+    }
+
+    /**
      * @notice Generate commitment hash
      * @param commitment The commitment struct
      * @return hash Keccak256 hash of commitment
      */
-    function _getCommitmentHash(OptionCommitment memory commitment) internal pure returns (bytes32 hash) {
-        return keccak256(abi.encode(
+    function _getCommitmentHash(OptionCommitment memory commitment) internal view returns (bytes32 hash) {
+        return getCommitmentHash(
             commitment.lp,
+            commitment.taker,
             commitment.asset,
             commitment.amount,
             commitment.targetPrice,
-            commitment.maxDuration,
-            commitment.fractionable,
+            commitment.premium,
+            commitment.durationDays,
+            uint8(commitment.optionType),
             commitment.expiry,
             commitment.nonce
-        ));
+        );
     }
 
     // Admin Functions
 
-    /**
-     * @notice Set safety margin (only callable by DUR holders via governance)
-     * @param newMargin New safety margin in basis points
-     */
-    function setSafetyMargin(uint256 newMargin) external override onlyDurToken {
-        safetyMargin = newMargin;
-        emit ProtocolFeeUpdated(newMargin);
-    }
 
     /**
      * @notice Set settlement router
      * @param router New settlement router address
      */
-    function setSettlementRouter(address router) external override onlyAdmin {
+    function setSettlementRouter(address router) external override onlyOwner {
         settlementRouter = ISettlementRouter(router);
     }
 
@@ -398,7 +463,7 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
      * @notice Add allowed asset
      * @param asset Asset to allow
      */
-    function addAllowedAsset(address asset) external onlyAdmin {
+    function addAllowedAsset(address asset) external onlyOwner {
         allowedAssets[asset] = true;
     }
 
@@ -406,22 +471,56 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
      * @notice Remove allowed asset
      * @param asset Asset to remove
      */
-    function removeAllowedAsset(address asset) external onlyAdmin {
+    function removeAllowedAsset(address asset) external onlyOwner {
         allowedAssets[asset] = false;
     }
 
     /**
      * @notice Emergency pause
      */
-    function emergencyPause() external override onlyAdmin {
+    function emergencyPause() external override onlyOwner {
         _pause();
     }
 
     /**
      * @notice Emergency unpause
      */
-    function emergencyUnpause() external override onlyAdmin {
+    function emergencyUnpause() external override onlyOwner {
         _unpause();
+    }
+
+    /**
+     * @notice Set safety margin for protocol fees
+     * @param newMargin New safety margin in basis points (max 1000 = 10%)
+     */
+    function setSafetyMargin(uint256 newMargin) external onlyOwner {
+        if (newMargin > 1000) revert InvalidCommitment(); // Max 10%
+        safetyMargin = newMargin;
+    }
+
+    /**
+     * @notice Sweep excess tokens not used as collateral
+     * @param asset Token address to sweep (use address(0) for ETH)
+     * @dev Only sweeps amounts above what's needed for active collateral
+     */
+    function sweepExcess(address asset) external onlyOwner {
+        if (asset == address(0)) {
+            // Sweep excess ETH (protocol fees should have been sent already)
+            uint256 balance = address(this).balance;
+            if (balance > 0) {
+                (bool success,) = payable(owner()).call{value: balance}("");
+                require(success, "ETH sweep failed");
+            }
+        } else {
+            // Sweep excess ERC20 tokens
+            uint256 balance = IERC20(asset).balanceOf(address(this));
+            uint256 locked = totalLocked[asset];
+            
+            if (balance > locked) {
+                uint256 excess = balance - locked;
+                IERC20(asset).safeTransfer(owner(), excess);
+            }
+        }
     }
 
     /**

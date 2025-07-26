@@ -1,0 +1,100 @@
+# Development version of docker-compose with hot reloading
+version: '3.8'
+
+services:
+  # PostgreSQL Database (same as production)
+  postgres:
+    image: postgres:15-alpine
+    container_name: duration-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: duration_finance_dev
+      POSTGRES_USER: duration_dev
+      POSTGRES_PASSWORD: duration_dev_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5433:5432" # Different port to avoid conflicts
+    networks:
+      - duration-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U duration_dev -d duration_finance_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache (same as production)
+  redis:
+    image: redis:7-alpine
+    container_name: duration-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6380:6379" # Different port to avoid conflicts
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - duration-dev-network
+    command: redis-server --appendonly yes --requirepass redis_dev_password
+
+  # Development Next.js app with hot reloading
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: duration-app-dev
+    restart: unless-stopped
+    ports:
+      - "3001:3000" # Different port for dev
+    environment:
+      # Development database
+      DATABASE_URL: postgresql://duration_dev:duration_dev_password@postgres:5432/duration_finance_dev
+      
+      # Development Redis
+      REDIS_URL: redis://:redis_dev_password@redis:6379
+      
+      # Environment
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: 1
+      
+      # Copy sensitive vars from .env
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      BASE_RPC_URL: ${BASE_RPC_URL}
+      BASE_TESTNET_RPC_URL: ${BASE_TESTNET_RPC_URL}
+      BASESCAN_API_KEY: ${BASESCAN_API_KEY}
+      ONEINCH_API_KEY: ${ONEINCH_API_KEY}
+      ONEINCH_API_URL: ${ONEINCH_API_URL}
+      
+      # Development secrets
+      JWT_SECRET: jwt_development_secret_key_2024
+      ENCRYPTION_KEY: development_encryption_key_32char
+      
+      # Frontend variables
+      NEXT_PUBLIC_ONCHAINKIT_PROJECT_NAME: ${NEXT_PUBLIC_ONCHAINKIT_PROJECT_NAME}
+      NEXT_PUBLIC_URL: http://localhost:3001
+      NEXT_PUBLIC_ICON_URL: http://localhost:3001/logo.png
+      NEXT_PUBLIC_ONCHAINKIT_API_KEY: ${NEXT_PUBLIC_ONCHAINKIT_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - duration-dev-network
+    volumes:
+      # Mount source code for hot reloading
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+
+networks:
+  duration-dev-network:
+    driver: bridge

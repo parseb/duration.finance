@@ -16,11 +16,10 @@ interface ActiveOption {
   created_at: string;
 }
 
-interface TakeOptionRequest {
+interface TakeCommitmentRequest {
   commitmentHash: string;
-  amount: number;
-  takerAddress: string;
-  premium: number;
+  takerAddress: string; // Address taking the commitment
+  optionType: 0 | 1; // 0=CALL, 1=PUT (only used if LP didn't specify)
   txHash?: string;
 }
 
@@ -133,15 +132,22 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/options - Take an option (called after on-chain transaction)
+// POST /api/options - Take a commitment (called after on-chain transaction)
 export async function POST(request: NextRequest) {
   try {
-    const body: TakeOptionRequest = await request.json();
+    const body: TakeCommitmentRequest = await request.json();
 
     // Validate request
-    if (!body.commitmentHash || !body.takerAddress || body.amount <= 0) {
+    if (!body.commitmentHash || !body.takerAddress) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    if (body.optionType !== 0 && body.optionType !== 1) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid option type' },
         { status: 400 }
       );
     }
@@ -161,6 +167,7 @@ export async function POST(request: NextRequest) {
     const optionId = Math.floor(Math.random() * 1000000);
 
     // Create active option record
+    // Note: In real implementation, this data should come from the commitment lookup
     const newOption: ActiveOption = {
       id: optionId,
       commitment_hash: body.commitmentHash,
@@ -168,11 +175,11 @@ export async function POST(request: NextRequest) {
       taker_address: body.takerAddress,
       lp_address: '0x1234567890123456789012345678901234567890', // Should come from commitment
       asset_address: '0x4200000000000000000000000000000000000006', // WETH
-      amount: body.amount,
-      target_price: 4000, // Should come from commitment
-      premium_paid: body.premium,
-      expiry_timestamp: Date.now() + 86400000, // Should come from commitment
-      option_type: 'CALL', // Determined by current price vs target price
+      amount: 1.0, // Should come from commitment
+      target_price: 3500, // Should be current price for taker commitments, target price for LP commitments
+      premium_paid: 300, // Should come from commitment (taker's premium or calculated premium)
+      expiry_timestamp: Date.now() + 86400000, // Should come from commitment duration
+      option_type: body.optionType === 0 ? 'CALL' : 'PUT',
       exercise_status: 'active',
       created_at: new Date().toISOString(),
     };

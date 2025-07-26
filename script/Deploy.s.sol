@@ -3,7 +3,7 @@ pragma solidity 0.8.25;
 
 import {Script, console} from "forge-std/Script.sol";
 import {DurationOptions} from "../src/DurationOptions.sol";
-import {SettlementRouter} from "../src/SettlementRouter.sol";
+import {OneInchSettlementRouter} from "../src/settlement/OneInchSettlementRouter.sol";
 
 /**
  * @title Deploy
@@ -14,7 +14,7 @@ contract Deploy is Script {
     
     // Deployment addresses will be stored here
     DurationOptions public options; 
-    SettlementRouter public settlement;
+    OneInchSettlementRouter public settlement;
 
     // Configuration
     address public constant OWNER = 0x1234567890123456789012345678901234567890; // Replace with actual
@@ -27,9 +27,9 @@ contract Deploy is Script {
         console.log("Deployer:", vm.addr(deployerPrivateKey));
 
         // Deploy SettlementRouter
-        console.log("Deploying SettlementRouter...");
-        settlement = new SettlementRouter(address(0)); // Will update options address after deployment
-        console.log("SettlementRouter deployed at:", address(settlement));
+        console.log("Deploying OneInchSettlementRouter...");
+        settlement = new OneInchSettlementRouter(OWNER);
+        console.log("OneInchSettlementRouter deployed at:", address(settlement));
 
         // Deploy DurationOptions  
         console.log("Deploying DurationOptions...");
@@ -61,7 +61,7 @@ contract Deploy is Script {
         // Use deployer as owner for testnet
         address deployer = vm.addr(deployerPrivateKey);
         
-        settlement = new SettlementRouter(address(0));
+        settlement = new OneInchSettlementRouter(deployer);
         options = new DurationOptions(address(settlement), deployer);
 
         console.log("Testnet deployment complete:");

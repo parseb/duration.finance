@@ -3,7 +3,7 @@ pragma solidity 0.8.25;
 
 import {Test, console} from "forge-std/Test.sol";
 import {DurationOptions} from "../src/DurationOptions.sol";
-import {SettlementRouter} from "../src/SettlementRouter.sol";
+import {OneInchSettlementRouter} from "../src/settlement/OneInchSettlementRouter.sol";
 import {IDurationOptions} from "../src/interfaces/IDurationOptions.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -14,7 +14,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  */
 contract DurationOptionsTest is Test {
     DurationOptions public options;
-    SettlementRouter public settlement;
+    OneInchSettlementRouter public settlement;
 
     address public constant WETH = 0x4200000000000000000000000000000000000006;
     address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
@@ -33,7 +33,7 @@ contract DurationOptionsTest is Test {
 
     function setUp() public {
         // Deploy contracts
-        settlement = new SettlementRouter(address(0));
+        settlement = new OneInchSettlementRouter(admin);
         options = new DurationOptions(address(settlement), admin);
 
         // Setup test tokens and balances
@@ -75,7 +75,7 @@ contract DurationOptionsTest is Test {
         bytes32 commitmentHash = _getCommitmentHash(commitment);
         
         vm.prank(alice);
-        options.storeCommitment(commitment);
+        options.createCommitment(commitment);
         
         // Check if commitment was stored by trying to calculate premium
         uint256 currentPrice = options.getCurrentPrice(WETH);
@@ -91,7 +91,7 @@ contract DurationOptionsTest is Test {
         
         // Store commitment (simulating frontend flow)
         vm.prank(alice);
-        options.storeCommitment(commitment);
+        options.createCommitment(commitment);
 
         // Mock WETH and USDC transfers
         vm.mockCall(
@@ -146,7 +146,7 @@ contract DurationOptionsTest is Test {
         bytes32 commitmentHash = _getCommitmentHash(commitment);
         
         vm.prank(alice);
-        options.storeCommitment(commitment);
+        options.createCommitment(commitment);
         
         uint256 currentPrice = options.getCurrentPrice(WETH);
         uint256 premium = options.calculatePremium(commitmentHash, currentPrice);
@@ -230,7 +230,7 @@ contract DurationOptionsTest is Test {
         
         // Store commitment
         vm.prank(bob);
-        options.storeCommitment(takerCommitment);
+        options.createCommitment(takerCommitment);
         
         // Mock USDC and WETH transfers for LP taking taker commitment
         vm.mockCall(
@@ -267,7 +267,7 @@ contract DurationOptionsTest is Test {
         bytes32 commitmentHash = _getCommitmentHash(commitment);
         
         vm.prank(alice);
-        options.storeCommitment(commitment);
+        options.createCommitment(commitment);
         
         vm.mockCall(
             WETH,
@@ -302,7 +302,7 @@ contract DurationOptionsTest is Test {
         bytes32 commitmentHash = _getCommitmentHash(commitment);
         
         vm.prank(alice);
-        options.storeCommitment(commitment);
+        options.createCommitment(commitment);
         
         vm.startPrank(bob);
         options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL); // Should fail
@@ -403,7 +403,7 @@ contract DurationOptionsTest is Test {
         bytes32 commitmentHash = _getCommitmentHash(commitment);
         
         vm.prank(alice);
-        options.storeCommitment(commitment);
+        options.createCommitment(commitment);
         
         vm.mockCall(
             WETH,

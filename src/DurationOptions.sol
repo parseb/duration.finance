@@ -5,11 +5,33 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {IDurationOptions} from "./interfaces/IDurationOptions.sol";
 import {ISettlementRouter} from "./interfaces/I1inch.sol";
 import {VerifySignature} from "./utils/VerifySignature.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
+/**
+ * @title I1inchQuoter Interface  
+ * @notice Interface for getting 1inch quotes directly
+ */
+interface I1inchQuoter {
+    function getQuote(
+        address tokenIn,
+        address tokenOut, 
+        uint256 amountIn
+    ) external view returns (uint256 amountOut, uint256 gasEstimate);
+}
+
+/**
+ * @title IWETH Interface
+ * @notice Interface for WETH contract with deposit/withdraw functions
+ */
+interface IWETH is IERC20 {
+    function deposit() external payable;
+    function withdraw(uint256 amount) external;
+}
 
 /**
  * @title DurationOptions
@@ -65,66 +87,6 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         allowedAssets[WETH] = true;
     }
 
-    /**
-     * @notice Create commitment (LP or Taker)
-     * @param commitment The option commitment struct
-     * @dev This function validates but doesn't store - used for verification
-     */
-    function createCommitment(OptionCommitment calldata commitment) external override {
-        // Determine if this is LP or Taker commitment
-        bool isLpCommitment = commitment.lp != address(0);
-        bool isTakerCommitment = commitment.taker != address(0);
-        
-        // Must be either LP or Taker, but not both
-        if (!((isLpCommitment && !isTakerCommitment) || (!isLpCommitment && isTakerCommitment))) revert InvalidCommitment();
-        
-        // Validate sender
-        address expectedSender = isLpCommitment ? commitment.lp : commitment.taker;
-        if (expectedSender != msg.sender) revert InvalidCommitment();
-        
-        // Common validations
-        if (!allowedAssets[commitment.asset]) revert InvalidAsset();
-        if (commitment.amount < MIN_OPTION_SIZE || commitment.amount > MAX_OPTION_SIZE) {
-            revert InvalidAmount();
-        }
-        if (commitment.durationDays == 0 || commitment.durationDays > 365) {
-            revert InvalidDuration();
-        }
-        if (commitment.expiry <= block.timestamp) revert CommitmentExpired();
-        
-        // LP-specific validations
-        if (isLpCommitment) {
-            if (commitment.targetPrice == 0) revert InvalidCommitment();
-            if (commitment.premium != 0) revert InvalidCommitment(); // LP doesn't set premium
-        }
-        
-        // Taker-specific validations  
-        if (isTakerCommitment) {
-            if (commitment.premium == 0) revert InvalidCommitment(); // Taker must set premium
-            if (commitment.targetPrice != 0) revert InvalidCommitment(); // Taker doesn't set target price
-        }
-
-        // Verify signature
-        bool isValid = verifyCommitmentSignature(
-            commitment.lp,
-            commitment.taker,
-            commitment.asset,
-            commitment.amount,
-            commitment.targetPrice,
-            commitment.premium,
-            commitment.durationDays,
-            uint8(commitment.optionType),
-            commitment.expiry,
-            commitment.nonce,
-            commitment.signature
-        );
-
-        if (!isValid) revert InvalidCommitment();
-
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
-        address creator = isLpCommitment ? commitment.lp : commitment.taker;
-        emit CommitmentCreated(commitmentHash, creator, commitment.asset, commitment.amount);
-    }
 
     /**
      * @notice Take a commitment (LP or Taker)
@@ -136,18 +98,19 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         bytes32 commitmentHash,
         OptionType optionType
     ) external override nonReentrant whenNotPaused returns (uint256 optionId) {
-        // Load commitment
+        // CHECKS: Load and validate commitment
         OptionCommitment memory commitment = commitments[commitmentHash];
         
-        // Validate commitment exists
         bool isLpCommitment = commitment.lp != address(0);
         bool isTakerCommitment = commitment.taker != address(0);
-        if (!((isLpCommitment && !isTakerCommitment) || (!isLpCommitment && isTakerCommitment))) revert CommitmentNotFound();
+        if (!((isLpCommitment && !isTakerCommitment) || (!isLpCommitment && isTakerCommitment))) {
+            revert CommitmentNotFound();
+        }
         
         if (commitment.expiry <= block.timestamp) revert CommitmentExpired();
         if (commitment.amount < MIN_OPTION_SIZE) revert InvalidAmount();
 
-        // Get current price
+        // CHECKS: Get current price and calculate parameters
         uint256 currentPrice = getCurrentPrice(commitment.asset);
         uint256 finalTargetPrice;
         uint256 premium;
@@ -163,18 +126,11 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
             // Check if current price is better than LP target - if so, do simple swap  
             if (currentPrice > commitment.targetPrice) {
                 _executeSimpleSwap(commitment, currentPrice);
-                delete commitments[commitmentHash];
+                // _executeSimpleSwap handles state updates and deletions
                 return 0; // Simple swap executed
             }
             
-            // Calculate premium for LP commitment
             premium = calculatePremium(commitmentHash, currentPrice);
-            
-            // Transfer USDC premium from taker to protocol
-            IERC20(USDC).safeTransferFrom(msg.sender, address(this), premium);
-            
-            // Transfer LP asset to protocol for collateral
-            IERC20(commitment.asset).safeTransferFrom(commitment.lp, address(this), commitment.amount);
             
         } else {
             // Taker commitment being taken by LP
@@ -182,22 +138,13 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
             lpAddress = msg.sender;
             finalTargetPrice = currentPrice; // Target price = current price for taker commitments
             premium = commitment.premium; // Premium already specified by taker
-            
-            // Transfer USDC premium from taker to protocol (taker already committed to this)
-            IERC20(USDC).safeTransferFrom(commitment.taker, address(this), premium);
-            
-            // Transfer LP asset to protocol for collateral  
-            IERC20(commitment.asset).safeTransferFrom(msg.sender, address(this), commitment.amount);
         }
 
-        // Update locked amount
-        totalLocked[commitment.asset] += commitment.amount;
-
-        // Determine final option type
-        OptionType finalOptionType = commitment.optionType;
-
-        // Create active option
+        // EFFECTS: Update state before external interactions
         optionId = ++optionCounter;
+        totalLocked[commitment.asset] += commitment.amount;
+        
+        // Store active option
         activeOptions[optionId] = ActiveOption({
             commitmentHash: commitmentHash,
             taker: optionTaker,
@@ -208,15 +155,28 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
             premium: premium,
             exerciseDeadline: block.timestamp + (commitment.durationDays * 1 days),
             currentPrice: currentPrice,
-            optionType: finalOptionType,
+            optionType: commitment.optionType,
             state: OptionState.TAKEN
         });
 
-        // Send USDC premium to LP
-        IERC20(USDC).safeTransfer(lpAddress, premium);
-
         // Remove commitment as it's been taken
         delete commitments[commitmentHash];
+
+        // INTERACTIONS: External calls after state updates
+        if (isLpCommitment) {
+            // Transfer USDC premium from taker to protocol
+            IERC20(USDC).safeTransferFrom(msg.sender, address(this), premium);
+            // Transfer LP asset to protocol for collateral
+            IERC20(commitment.asset).safeTransferFrom(commitment.lp, address(this), commitment.amount);
+        } else {
+            // Transfer USDC premium from taker to protocol (taker already committed to this)
+            IERC20(USDC).safeTransferFrom(commitment.taker, address(this), premium);
+            // Transfer LP asset to protocol for collateral  
+            IERC20(commitment.asset).safeTransferFrom(msg.sender, address(this), commitment.amount);
+        }
+
+        // Send USDC premium to LP
+        IERC20(USDC).safeTransfer(lpAddress, premium);
 
         emit OptionTaken(optionId, commitmentHash, optionTaker, commitment.amount, premium);
     }
@@ -230,6 +190,7 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         uint256 optionId,
         SettlementParams calldata params
     ) external override nonReentrant whenNotPaused {
+        // CHECKS: Load and validate option
         ActiveOption storage option = activeOptions[optionId];
         if (option.taker != msg.sender) revert UnauthorizedCaller();
         if (!isExercisable(optionId)) revert OptionNotExercisable();
@@ -238,7 +199,7 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         uint256 currentPrice = getCurrentPrice(option.asset);
         uint256 profit = 0;
         
-        // Check if option is profitable
+        // Calculate profit in USD
         if (option.optionType == OptionType.CALL && currentPrice > option.targetPrice) {
             profit = (currentPrice - option.targetPrice) * option.amount / 1e18;
         } else if (option.optionType == OptionType.PUT && currentPrice < option.targetPrice) {
@@ -247,23 +208,22 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
             revert OptionNotExercisable();
         }
 
-        // Execute settlement through 1inch
-        _executeSettlement(option, params, profit);
-
-        // Update option state
+        // EFFECTS: Update state before external interactions
         option.state = OptionState.EXERCISED;
         totalLocked[option.asset] -= option.amount;
 
-        // Calculate protocol fee
-        uint256 protocolFee = (profit * safetyMargin) / 10000;
-        
-        // Send protocol fee to owner
-        if (protocolFee > 0) {
-            (bool success,) = payable(owner()).call{value: protocolFee}("");
-            require(success, "Protocol fee transfer failed");
+        // Calculate protocol fee on profit (in USDC)
+        uint256 protocolFeeUSDC = (profit * safetyMargin) / 10000 / 1e12; // Convert to USDC decimals
+
+        // INTERACTIONS: Execute settlement through 1inch
+        _executeSettlement(option, params, profit);
+
+        // Transfer protocol fee in USDC to owner (if any)
+        if (protocolFeeUSDC > 0) {
+            IERC20(USDC).safeTransfer(owner(), protocolFeeUSDC);
         }
 
-        emit OptionExercised(optionId, profit, protocolFee);
+        emit OptionExercised(optionId, profit, protocolFeeUSDC);
     }
 
     /**
@@ -325,16 +285,34 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
     }
 
     /**
-     * @notice Get current price of asset (using 1inch oracle)
+     * @notice Get current price via 1inch quote (asset -> USDC)
      * @param asset Asset address
-     * @return price Current price in wei
+     * @param amount Amount to quote (1 unit by default)
+     * @return price Current price in USD with USDC decimals (6)
      */
-    function getCurrentPrice(address asset) public pure override returns (uint256 price) {
-        // For now, return mock price - integrate with 1inch oracle
-        if (asset == WETH) {
-            return 3500e18; // Mock $3500 WETH price
+    function getCurrentPrice(address asset, uint256 amount) public view returns (uint256 price) {
+        if (asset == USDC) {
+            return amount; // USDC to USDC is 1:1
         }
-        return 1e18; // Default $1
+        
+        // Get 1inch quote: asset -> USDC
+        (uint256 amountOut,,) = settlementRouter.getSettlementQuote(asset, USDC, amount);
+        return amountOut;
+    }
+    
+    /**
+     * @notice Get current price for 1 unit of asset (backward compatibility)
+     * @param asset Asset address
+     * @return price Current price in USD with 18 decimals (converted from USDC)
+     */
+    function getCurrentPrice(address asset) public view override returns (uint256 price) {
+        if (asset == USDC) {
+            return 1e18; // $1 USDC in 18 decimals
+        }
+        
+        // Get price for 1 unit, result should be in USDC (6 decimals)
+        uint256 usdcPrice = getCurrentPrice(asset, 1 ether);
+        return usdcPrice * 1e12; // Convert 6 decimals to 18 decimals
     }
 
     /**
@@ -356,52 +334,128 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
     }
 
     /**
-     * @notice Store commitment in contract (called from frontend after validation)
-     * @param commitment The commitment to store
+     * @notice Create and store commitment with signature validation
+     * @param commitment The commitment to create
      */
-    function storeCommitment(OptionCommitment calldata commitment) external {
+    function createCommitment(OptionCommitment calldata commitment) external override nonReentrant whenNotPaused {
+        // Validate commitment structure
+        bool isLpCommitment = commitment.lp != address(0);
+        bool isTakerCommitment = commitment.taker != address(0);
+        if (!((isLpCommitment && !isTakerCommitment) || (!isLpCommitment && isTakerCommitment))) {
+            revert InvalidCommitment();
+        }
+        
+        // Validate commitment parameters
+        if (commitment.amount < MIN_OPTION_SIZE || commitment.amount > MAX_OPTION_SIZE) {
+            revert InvalidAmount();
+        }
+        if (commitment.durationDays < 1 || commitment.durationDays > 365) {
+            revert InvalidDuration();
+        }
+        if (!allowedAssets[commitment.asset]) {
+            revert InvalidAsset();
+        }
+        if (commitment.expiry <= block.timestamp) {
+            revert CommitmentExpired();
+        }
+
+        // Determine signer and validate nonce
+        address signer = isLpCommitment ? commitment.lp : commitment.taker;
+        if (commitment.nonce != nonces[signer] + 1) {
+            revert InvalidCommitment();
+        }
+
+        // Verify EIP-712 signature
         bytes32 commitmentHash = _getCommitmentHash(commitment);
+        
+        // Create typed data hash for signature verification
+        bytes32 digest = getCommitmentHash(
+            commitment.lp,
+            commitment.taker,
+            commitment.asset,
+            commitment.amount,
+            commitment.targetPrice,
+            commitment.premium,
+            commitment.durationDays,
+            uint8(commitment.optionType),
+            commitment.expiry,
+            commitment.nonce
+        );
+        
+        // Recover signer and verify
+        address recoveredSigner = ECDSA.recover(digest, commitment.signature);
+        if (recoveredSigner != signer) {
+            revert InvalidCommitment();
+        }
+
+        // Effects: Update state before external interactions
+        nonces[signer] = commitment.nonce;
+        _storeCommitment(commitment, commitmentHash);
+
+        emit CommitmentCreated(commitmentHash, signer, commitment.asset, commitment.amount);
+    }
+
+    /**
+     * @notice Internal function to store validated commitment
+     * @param commitment The commitment to store
+     * @param commitmentHash Pre-calculated hash
+     */
+    function _storeCommitment(OptionCommitment calldata commitment, bytes32 commitmentHash) internal {
         commitments[commitmentHash] = commitment;
     }
 
     /**
-     * @notice Execute settlement through 1inch
+     * @notice Execute settlement through 1inch with collateralization verification
      * @param option The option being exercised
      * @param params Settlement parameters
+     * @param expectedProfit Expected profit for validation
      */
     function _executeSettlement(
         ActiveOption memory option,
         SettlementParams calldata params,
-        uint256 /* expectedProfit */
+        uint256 expectedProfit
     ) internal {
+        // Checks: Validate parameters
+        if (params.deadline < block.timestamp) revert SettlementFailed();
+        if (params.minReturn == 0) revert SettlementFailed();
+
+        // Get expected LP payout in USDC (6 decimals)
+        uint256 expectedLpPayoutUSDC = (option.targetPrice * option.amount) / 1e18 / 1e12;
+        
+        // Verify minimum return covers LP payout + some profit for taker
+        if (params.minReturn < expectedLpPayoutUSDC) revert SettlementFailed();
+
         // Approve settlement router to spend asset
         IERC20(option.asset).forceApprove(address(settlementRouter), option.amount);
 
-        // Execute settlement based on method
+        // Execute settlement - asset -> USDC for easier calculation
         ISettlementRouter.SettlementResult memory result = settlementRouter.executeSettlement(
             ISettlementRouter.SettlementMethod(params.method),
             option.asset,
-            WETH, // Assume settling to WETH for now
+            USDC, // Settle to USDC for consistent pricing
             option.amount,
             params.minReturn,
             params.routingData
         );
 
+        // Checks: Validate settlement result meets collateralization requirements
         if (result.amountOut < params.minReturn) revert SettlementFailed();
+        if (result.amountOut < expectedLpPayoutUSDC) revert SettlementFailed(); // Ensure LP can be paid
 
-        // Distribute proceeds
-        uint256 lpPayout = (option.targetPrice * option.amount) / 1e18;
-        uint256 takerProfit = result.amountOut - lpPayout;
+        // Effects: Calculate payouts (all amounts in USDC 6 decimals)
+        uint256 lpPayoutUSDC = expectedLpPayoutUSDC;
+        uint256 takerProfitUSDC = result.amountOut > lpPayoutUSDC ? result.amountOut - lpPayoutUSDC : 0;
 
-        // Send LP their target price worth
-        (bool success,) = payable(option.lp).call{value: lpPayout}("");
-        require(success, "LP payout failed");
-
-        // Send taker their profit
-        if (takerProfit > 0) {
-            (success,) = payable(option.taker).call{value: takerProfit}("");
-            require(success, "Taker profit failed");
+        // Interactions: Distribute proceeds in USDC
+        if (lpPayoutUSDC > 0) {
+            IERC20(USDC).safeTransfer(option.lp, lpPayoutUSDC);
         }
+
+        if (takerProfitUSDC > 0) {
+            IERC20(USDC).safeTransfer(option.taker, takerProfitUSDC);
+        }
+
+        // Any remaining USDC stays in contract as protocol revenue
     }
 
     /**
@@ -413,19 +467,27 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         OptionCommitment memory commitment,
         uint256 currentPrice
     ) internal {
+        // CHECKS: Validate simple swap conditions
+        require(currentPrice > commitment.targetPrice, "Price not better than target");
+        
+        // EFFECTS: Calculate LP payout in USDC (target price is USD, convert to USDC decimals)
+        uint256 lpPayoutUSDC = (commitment.targetPrice * commitment.amount) / 1e18 / 1e12; // Convert to USDC 6 decimals
+        
+        // Delete commitment first (effects)
+        bytes32 commitmentHash = _getCommitmentHash(commitment);
+        delete commitments[commitmentHash];
+
+        // INTERACTIONS: External calls after state updates
         // Transfer LP asset to protocol
         IERC20(commitment.asset).safeTransferFrom(commitment.lp, address(this), commitment.amount);
         
-        // Calculate LP payout at their target price
-        uint256 lpPayout = (commitment.targetPrice * commitment.amount) / 1e18;
-        
-        // Send LP their target price worth in USDC (assuming 1:1 USDC:USD)
-        IERC20(USDC).safeTransfer(commitment.lp, lpPayout);
+        // Send LP their target price worth in USDC
+        IERC20(USDC).safeTransfer(commitment.lp, lpPayoutUSDC);
         
         // Note: LP asset remains in contract as protocol revenue
         // Will be available for sweep via sweepExcess function
         
-        emit OptionTaken(0, keccak256(abi.encode(commitment)), commitment.lp, commitment.amount, 0);
+        emit OptionTaken(0, commitmentHash, commitment.lp, commitment.amount, 0);
     }
 
     /**
@@ -476,6 +538,15 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
     }
 
     /**
+     * @notice Get current nonce for address (needed for EIP-712 signatures)
+     * @param user Address to get nonce for
+     * @return nonce Current nonce value
+     */
+    function getNonce(address user) external view returns (uint256 nonce) {
+        return nonces[user];
+    }
+
+    /**
      * @notice Emergency pause
      */
     function emergencyPause() external override onlyOwner {
@@ -497,6 +568,8 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         if (newMargin > 1000) revert InvalidCommitment(); // Max 10%
         safetyMargin = newMargin;
     }
+
+    // Price oracle functionality removed - using 1inch quotes directly
 
     /**
      * @notice Sweep excess tokens not used as collateral

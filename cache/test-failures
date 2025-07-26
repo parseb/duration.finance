@@ -1,1 +1,1 @@
-test_RevertWhen_InsufficientPremium
+testCalculatePremium|testLiquidateExpiredOption|testTakeOption|testTakerCommitment|test_RevertWhen_InsufficientPremium

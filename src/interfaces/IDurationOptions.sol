@@ -68,6 +68,9 @@ interface IDurationOptions {
     function isExercisable(uint256 optionId) external view returns (bool);
     function getCurrentPrice(address asset) external view returns (uint256);
 
+    // View Functions
+    function getNonce(address user) external view returns (uint256 nonce);
+
     // Admin Functions
     function setSafetyMargin(uint256 newMargin) external;
     function setSettlementRouter(address router) external;

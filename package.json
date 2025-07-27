@@ -6,7 +6,28 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    
+    "docker:dev": "docker compose -f docker-compose.dev.yml up -d",
+    "docker:dev:build": "docker compose -f docker-compose.dev.yml up --build -d",
+    "docker:dev:logs": "docker compose -f docker-compose.dev.yml logs -f",
+    "docker:dev:stop": "docker compose -f docker-compose.dev.yml stop",
+    "docker:dev:down": "docker compose -f docker-compose.dev.yml down",
+    "docker:dev:restart": "docker compose -f docker-compose.dev.yml restart",
+    "docker:dev:status": "docker compose -f docker-compose.dev.yml ps",
+    
+    "docker:prod": "docker compose up -d",
+    "docker:prod:build": "docker compose up --build -d",
+    "docker:prod:logs": "docker compose logs -f",
+    "docker:prod:stop": "docker compose stop",
+    "docker:prod:down": "docker compose down",
+    "docker:prod:restart": "docker compose restart",
+    "docker:prod:status": "docker compose ps",
+    
+    "docker:infra": "docker compose -f docker-compose.dev.yml up postgres redis -d",
+    "docker:infra:stop": "docker compose -f docker-compose.dev.yml stop postgres redis",
+    
+    "containers:clean": "docker compose -f docker-compose.dev.yml down -v && docker compose down -v"
   },
   "dependencies": {
     "@coinbase/onchainkit": "latest",

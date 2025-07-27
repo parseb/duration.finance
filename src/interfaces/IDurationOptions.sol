@@ -51,6 +51,8 @@ interface IDurationOptions {
     event OptionTaken(uint256 indexed optionId, bytes32 indexed commitmentHash, address indexed taker, uint256 amount, uint256 premium);
     event OptionExercised(uint256 indexed optionId, uint256 profit, uint256 protocolFee);
     event OptionExpired(uint256 indexed optionId);
+    event OptionExpiredProfitable(uint256 indexed optionId, uint256 currentPrice, uint256 targetPrice);
+    event OptionExpiredUnprofitable(uint256 indexed optionId, uint256 currentPrice, uint256 targetPrice);
     event ExcessSwept(address indexed asset, address indexed to, uint256 amount);
     event ETHSwept(address indexed to, uint256 amount);
     event ProtocolFeeUpdated(uint256 newFee);
@@ -60,6 +62,7 @@ interface IDurationOptions {
     function takeCommitment(bytes32 commitmentHash, OptionType optionType) external returns (uint256 optionId);
     function exerciseOption(uint256 optionId, SettlementParams calldata params) external;
     function liquidateExpiredOption(uint256 optionId) external;
+    function liquidateExpiredOption(uint256 optionId, uint256 maxPriceMovement) external;
 
     // View Functions
     function getCommitment(bytes32 commitmentHash) external view returns (OptionCommitment memory);

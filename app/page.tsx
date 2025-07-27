@@ -22,6 +22,7 @@ import {
   WalletDropdown,
   WalletDropdownDisconnect,
 } from '@coinbase/onchainkit/wallet';
+import { WalletConnection } from './components/WalletConnection';
 
 export default function Page() {
   const { setFrameReady, isFrameReady, context } = useMiniKit();
@@ -81,22 +82,9 @@ export default function Page() {
         </div>
       </header>
 
-      {/* Wallet Connection */}
+      {/* Enhanced Wallet Connection */}
       <div className="p-4 bg-blue-800 border-b border-blue-600">
-        <Wallet className="w-full">
-          <ConnectWallet className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold transition-colors">
-            <Name className="text-inherit" />
-          </ConnectWallet>
-          <WalletDropdown>
-            <Identity className="px-4 pt-3 pb-2" hasCopyAddressOnClick>
-              <Avatar />
-              <Name />
-              <Address />
-              <EthBalance />
-            </Identity>
-            <WalletDropdownDisconnect />
-          </WalletDropdown>
-        </Wallet>
+        <WalletConnection />
       </div>
 
       {/* Tab Navigation */}

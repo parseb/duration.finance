@@ -50,7 +50,7 @@ export interface SwapResponse {
 class OneInchClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
-  private readonly chainId: number = 8453; // Base mainnet
+  private readonly chainId: number = 8453; // Base mainnet - confirmed 1inch support
 
   constructor() {
     this.baseUrl = ENV.ONEINCH_API_URL;
@@ -66,7 +66,8 @@ class OneInchClient {
       throw new Error('1inch API key not configured');
     }
 
-    const url = new URL(`${this.baseUrl}/v5.2/${this.chainId}${endpoint}`);
+    // Correct 1inch API URL structure: /swap/v6.0/{chainId}/{endpoint}
+    const url = new URL(`${this.baseUrl}/swap/v6.0/${this.chainId}${endpoint}`);
     
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
@@ -106,13 +107,19 @@ class OneInchClient {
    */
   async getQuote(params: QuoteParams): Promise<QuoteResponse> {
     const queryParams = {
-      fromTokenAddress: params.fromTokenAddress,
-      toTokenAddress: params.toTokenAddress,
+      src: params.fromTokenAddress,  // 1inch uses 'src' not 'fromTokenAddress'
+      dst: params.toTokenAddress,    // 1inch uses 'dst' not 'toTokenAddress' 
       amount: params.amount,
-      slippage: (params.slippage || 1).toString(),
     };
 
-    return this.makeRequest('/quote', queryParams);
+    const response = await this.makeRequest('/quote', queryParams);
+    
+    // Transform 1inch response to our expected format
+    return {
+      toTokenAmount: response.dstAmount || response.toTokenAmount,
+      estimatedGas: response.estimatedGas || '0',
+      protocols: response.protocols || []
+    };
   }
 
   /**

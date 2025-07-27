@@ -227,7 +227,32 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
     }
 
     /**
-     * @notice Liquidate expired option
+     * @notice Liquidate expired option with price simulation and safety checks
+     * @param optionId The option to liquidate
+     * @param maxPriceMovement Maximum allowed price movement in basis points (e.g., 500 = 5%)
+     * @dev Anyone can liquidate - protocol verifies price stability during settlement
+     */
+    function liquidateExpiredOption(uint256 optionId, uint256 maxPriceMovement) external override nonReentrant {
+        ActiveOption storage option = activeOptions[optionId];
+        if (option.state != OptionState.TAKEN) revert OptionNotFound();
+        if (block.timestamp <= option.exerciseDeadline) revert OptionNotExercisable();
+        if (maxPriceMovement > 2000) revert("Price movement tolerance too high"); // Max 20%
+
+        // STEP 1: Initial price check and profitability assessment
+        uint256 initialPrice = getCurrentPrice(option.asset);
+        bool initiallyProfitable = _isProfitable(option, initialPrice);
+
+        if (initiallyProfitable) {
+            // STEP 2: Simulate settlement with price stability verification
+            _liquidateProfitableWithSimulation(optionId, option, initialPrice, maxPriceMovement);
+        } else {
+            // UNPROFITABLE: Return asset to LP (no price risk)
+            _liquidateUnprofitableExpiredOption(optionId);
+        }
+    }
+    
+    /**
+     * @notice Liquidate expired option with default price tolerance (5%)
      * @param optionId The option to liquidate
      */
     function liquidateExpiredOption(uint256 optionId) external override nonReentrant {
@@ -235,14 +260,179 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         if (option.state != OptionState.TAKEN) revert OptionNotFound();
         if (block.timestamp <= option.exerciseDeadline) revert OptionNotExercisable();
 
-        // Return asset to LP
-        IERC20(option.asset).safeTransfer(option.lp, option.amount);
-        totalLocked[option.asset] -= option.amount;
+        uint256 defaultMaxPriceMovement = 500; // 5% default tolerance
+        
+        // STEP 1: Initial price check and profitability assessment
+        uint256 initialPrice = getCurrentPrice(option.asset);
+        bool initiallyProfitable = _isProfitable(option, initialPrice);
 
+        if (initiallyProfitable) {
+            // STEP 2: Simulate settlement with price stability verification
+            _liquidateProfitableWithSimulation(optionId, option, initialPrice, defaultMaxPriceMovement);
+        } else {
+            // UNPROFITABLE: Return asset to LP (no price risk)
+            _liquidateUnprofitableExpiredOption(optionId);
+        }
+    }
+    
+    /**
+     * @notice Check if option is profitable at given price
+     */
+    function _isProfitable(ActiveOption memory option, uint256 price) internal pure returns (bool) {
+        if (option.optionType == OptionType.CALL) {
+            return price > option.targetPrice;
+        } else {
+            return price < option.targetPrice;
+        }
+    }
+    
+    /**
+     * @notice Liquidate profitable option with price simulation and verification
+     * @param optionId The option ID
+     * @param option The option data
+     * @param initialPrice Initial market price
+     * @param maxPriceMovement Maximum allowed price movement in basis points
+     */
+    function _liquidateProfitableWithSimulation(
+        uint256 optionId,
+        ActiveOption storage option,
+        uint256 initialPrice,
+        uint256 maxPriceMovement
+    ) internal {
+        // Calculate expected LP payout in USDC (6 decimals)
+        uint256 expectedLpPayoutUSDC = (option.targetPrice * option.amount) / 1e18 / 1e12;
+        
+        // STEP 1: Get initial 1inch quote for simulation
+        (uint256 simulatedQuote, ISettlementRouter.SettlementMethod method, bytes memory routingData) = 
+            settlementRouter.getSettlementQuote(option.asset, USDC, option.amount);
+        
+        // STEP 2: Verify simulated settlement meets profit requirements
+        uint256 protocolSafetyMargin = (expectedLpPayoutUSDC * safetyMargin) / 10000;
+        uint256 minimumRequired = expectedLpPayoutUSDC + protocolSafetyMargin;
+        
+        if (simulatedQuote < minimumRequired) {
+            // Simulation shows insufficient profit - treat as unprofitable
+            _liquidateUnprofitableExpiredOption(optionId);
+            return;
+        }
+        
+        // Execute settlement with price simulation protection
+        _executeSimulatedSettlement(optionId, option, initialPrice, maxPriceMovement, simulatedQuote, method, routingData, expectedLpPayoutUSDC);
+    }
+    
+    /**
+     * @notice Execute settlement with comprehensive price verification
+     */
+    function _executeSimulatedSettlement(
+        uint256 optionId,
+        ActiveOption storage option, 
+        uint256 initialPrice,
+        uint256 maxPriceMovement,
+        uint256 simulatedQuote,
+        ISettlementRouter.SettlementMethod method,
+        bytes memory routingData,
+        uint256 expectedLpPayoutUSDC
+    ) internal {
+        // Pre-settlement checks
+        if (!_verifyPriceStability(option.asset, initialPrice, maxPriceMovement)) {
+            _liquidateUnprofitableExpiredOption(optionId);
+            return;
+        }
+        
+        // Execute settlement
+        uint256 result = _performSettlement(option, method, routingData, simulatedQuote);
+        
+        // Post-settlement verification
+        if (result < expectedLpPayoutUSDC) {
+            revert("Settlement verification failed");
+        }
+        
+        // Final price check
+        if (!_verifyPriceStability(option.asset, initialPrice, maxPriceMovement)) {
+            revert("Price manipulation detected");
+        }
+        
+        // Distribute and finalize
+        _finalizeProfitableLiquidation(optionId, option, result, expectedLpPayoutUSDC, initialPrice);
+    }
+    
+    /**
+     * @notice Verify price stability within bounds
+     */
+    function _verifyPriceStability(
+        address asset,
+        uint256 basePrice,
+        uint256 maxMovement
+    ) internal view returns (bool) {
+        uint256 currentPrice = getCurrentPrice(asset);
+        uint256 upperBound = (basePrice * (10000 + maxMovement)) / 10000;
+        uint256 lowerBound = (basePrice * (10000 - maxMovement)) / 10000;
+        
+        return currentPrice <= upperBound && currentPrice >= lowerBound;
+    }
+    
+    /**
+     * @notice Perform the actual settlement
+     */
+    function _performSettlement(
+        ActiveOption storage option,
+        ISettlementRouter.SettlementMethod method,
+        bytes memory routingData,
+        uint256 simulatedQuote
+    ) internal returns (uint256) {
+        IERC20(option.asset).forceApprove(address(settlementRouter), option.amount);
+        uint256 minReturn = simulatedQuote * 98 / 100; // 2% slippage
+        
+        ISettlementRouter.SettlementResult memory result = settlementRouter.executeSettlement(
+            method,
+            option.asset,
+            USDC,
+            option.amount,
+            minReturn,
+            routingData
+        );
+        
+        if (result.amountOut < minReturn) {
+            revert("Settlement verification failed");
+        }
+        
+        return result.amountOut;
+    }
+    
+    /**
+     * @notice Finalize profitable liquidation
+     */
+    function _finalizeProfitableLiquidation(
+        uint256 optionId,
+        ActiveOption storage option,
+        uint256 totalAmount,
+        uint256 expectedLpPayoutUSDC,
+        uint256 initialPrice
+    ) internal {
+        // Distribute proceeds
+        _distributeProfitableProceeds(option, totalAmount, expectedLpPayoutUSDC);
+        
         // Update state
         option.state = OptionState.EXPIRED;
-
-        emit OptionExpired(optionId);
+        totalLocked[option.asset] -= option.amount;
+        
+        emit OptionExpiredProfitable(optionId, initialPrice, option.targetPrice);
+    }
+    
+    /**
+     * @notice Distribute proceeds from profitable liquidation
+     */
+    function _distributeProfitableProceeds(
+        ActiveOption storage option,
+        uint256 totalAmount,
+        uint256 expectedLpPayoutUSDC
+    ) internal {
+        
+        // LP gets target price, protocol keeps excess
+        if (expectedLpPayoutUSDC > 0) {
+            IERC20(USDC).safeTransfer(option.lp, expectedLpPayoutUSDC);
+        }
+        // Remaining USDC (protocol fee + profit) stays in contract
     }
 
     /**
@@ -418,12 +608,20 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         // Checks: Validate parameters
         if (params.deadline < block.timestamp) revert SettlementFailed();
         if (params.minReturn == 0) revert SettlementFailed();
+        if (option.amount == 0) revert SettlementFailed();
 
         // Get expected LP payout in USDC (6 decimals)
         uint256 expectedLpPayoutUSDC = (option.targetPrice * option.amount) / 1e18 / 1e12;
         
-        // Verify minimum return covers LP payout + some profit for taker
-        if (params.minReturn < expectedLpPayoutUSDC) revert SettlementFailed();
+        // Critical collateralization checks
+        if (expectedLpPayoutUSDC == 0) revert SettlementFailed(); // Prevent zero LP payout
+        if (params.minReturn < expectedLpPayoutUSDC) revert SettlementFailed(); // Must cover LP payout
+        
+        // Verify current market price justifies exercise (prevent manipulation)
+        uint256 currentMarketPrice = getCurrentPrice(option.asset);
+        bool isProfitable = (option.optionType == OptionType.CALL && currentMarketPrice > option.targetPrice) ||
+                           (option.optionType == OptionType.PUT && currentMarketPrice < option.targetPrice);
+        if (!isProfitable) revert SettlementFailed(); // Only allow profitable exercises
 
         // Approve settlement router to spend asset
         IERC20(option.asset).forceApprove(address(settlementRouter), option.amount);
@@ -438,13 +636,23 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
             params.routingData
         );
 
-        // Checks: Validate settlement result meets collateralization requirements
+        // Checks: Comprehensive settlement validation
         if (result.amountOut < params.minReturn) revert SettlementFailed();
-        if (result.amountOut < expectedLpPayoutUSDC) revert SettlementFailed(); // Ensure LP can be paid
+        if (result.amountOut < expectedLpPayoutUSDC) revert SettlementFailed();
+        
+        // Additional safety checks
+        if (result.amountOut == 0) revert SettlementFailed(); // Prevent zero output
+        
+        // Verify protocol safety margin (minimum 0.01% above LP payout)
+        uint256 protocolSafetyMargin = (expectedLpPayoutUSDC * safetyMargin) / 10000;
+        uint256 minimumRequired = expectedLpPayoutUSDC + protocolSafetyMargin;
+        if (result.amountOut < minimumRequired) revert SettlementFailed();
 
-        // Effects: Calculate payouts (all amounts in USDC 6 decimals)
+        // Effects: Calculate payouts with safety margin protection
         uint256 lpPayoutUSDC = expectedLpPayoutUSDC;
-        uint256 takerProfitUSDC = result.amountOut > lpPayoutUSDC ? result.amountOut - lpPayoutUSDC : 0;
+        uint256 protocolFeeUSDC = (result.amountOut * safetyMargin) / 10000;
+        uint256 takerProfitUSDC = result.amountOut > (lpPayoutUSDC + protocolFeeUSDC) ? 
+                                 result.amountOut - lpPayoutUSDC - protocolFeeUSDC : 0;
 
         // Interactions: Distribute proceeds in USDC
         if (lpPayoutUSDC > 0) {
@@ -455,7 +663,8 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
             IERC20(USDC).safeTransfer(option.taker, takerProfitUSDC);
         }
 
-        // Any remaining USDC stays in contract as protocol revenue
+        // Protocol fee stays in contract for owner withdrawal
+        // protocolFeeUSDC automatically retained in contract balance
     }
 
     /**
@@ -569,7 +778,90 @@ contract DurationOptions is IDurationOptions, VerifySignature, ReentrancyGuard, 
         safetyMargin = newMargin;
     }
 
+    /**
+     * @notice Validate settlement parameters before execution
+     * @param option The option to be exercised
+     * @param params Settlement parameters
+     * @return isValid Whether the settlement is valid
+     * @return expectedPayout Expected LP payout in USDC
+     * @return minimumRequired Minimum settlement amount required
+     */
+    function validateSettlement(
+        ActiveOption calldata option,
+        SettlementParams calldata params
+    ) external view returns (
+        bool isValid,
+        uint256 expectedPayout,
+        uint256 minimumRequired
+    ) {
+        // Basic parameter validation
+        if (params.deadline < block.timestamp || 
+            params.minReturn == 0 || 
+            option.amount == 0) {
+            return (false, 0, 0);
+        }
+        
+        // Calculate expected LP payout
+        expectedPayout = (option.targetPrice * option.amount) / 1e18 / 1e12;
+        
+        // Calculate minimum required with safety margin
+        uint256 protocolSafetyMargin = (expectedPayout * safetyMargin) / 10000;
+        minimumRequired = expectedPayout + protocolSafetyMargin;
+        
+        // Verify profitability
+        uint256 currentMarketPrice = getCurrentPrice(option.asset);
+        bool isProfitable = (option.optionType == OptionType.CALL && currentMarketPrice > option.targetPrice) ||
+                           (option.optionType == OptionType.PUT && currentMarketPrice < option.targetPrice);
+        
+        // Verify settlement amount
+        bool sufficientAmount = params.minReturn >= minimumRequired;
+        
+        isValid = isProfitable && sufficientAmount && expectedPayout > 0;
+    }
+    
+    /**
+     * @notice Get current 1inch quote for validation
+     * @param tokenIn Input token address
+     * @param tokenOut Output token address  
+     * @param amountIn Input amount
+     * @return amountOut Expected output amount
+     * @return isValid Whether quote is valid
+     */
+    function getQuote(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) external view returns (uint256 amountOut, bool isValid) {
+        try settlementRouter.getSettlementQuote(tokenIn, tokenOut, amountIn) returns (
+            uint256 amount,
+            ISettlementRouter.SettlementMethod,
+            bytes memory
+        ) {
+            return (amount, amount > 0);
+        } catch {
+            return (0, false);
+        }
+    }
+    
     // Price oracle functionality removed - using 1inch quotes directly
+    
+    /**
+     * @notice Internal function to liquidate unprofitable expired option
+     * @param optionId The option to liquidate
+     */
+    function _liquidateUnprofitableExpiredOption(uint256 optionId) internal {
+        ActiveOption storage option = activeOptions[optionId];
+        
+        // Unprofitable expired option: Return asset to LP
+        IERC20(option.asset).safeTransfer(option.lp, option.amount);
+        totalLocked[option.asset] -= option.amount;
+        
+        // Update state
+        option.state = OptionState.EXPIRED;
+        
+        uint256 currentPrice = getCurrentPrice(option.asset);
+        emit OptionExpiredUnprofitable(optionId, currentPrice, option.targetPrice);
+    }
 
     /**
      * @notice Sweep excess tokens not used as collateral

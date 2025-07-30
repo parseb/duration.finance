@@ -24,13 +24,64 @@ import {
 } from '@coinbase/onchainkit/wallet';
 import { WalletConnection } from './components/WalletConnection';
 
+// Helper to detect if we're in a Farcaster mini app environment
+function useIsMiniApp() {
+  const [isMiniApp, setIsMiniApp] = useState(false);
+  
+  useEffect(() => {
+    // Check for Farcaster mini app environment
+    const isInFrame = window !== window.top;
+    const hasFrameContext = typeof window !== 'undefined' && 
+      (window as any).frameContext !== undefined;
+    const isFarcaster = typeof window !== 'undefined' && 
+      navigator.userAgent.includes('Farcaster');
+    
+    setIsMiniApp(isInFrame || hasFrameContext || isFarcaster);
+  }, []);
+  
+  return isMiniApp;
+}
+
+// Custom hook that conditionally uses MiniKit hooks
+function useMiniKitConditional() {
+  const isMiniApp = useIsMiniApp();
+  
+  // Only use MiniKit hooks if we're in a mini app environment
+  let miniKitData = null;
+  let addFrame = null;
+  let openUrl = null;
+  let close = null;
+  let viewProfile = null;
+  let sendNotification = null;
+  
+  try {
+    if (isMiniApp) {
+      miniKitData = useMiniKit();
+      addFrame = useAddFrame();
+      openUrl = useOpenUrl();
+      close = useClose();
+      viewProfile = useViewProfile();
+      sendNotification = useNotification();
+    }
+  } catch (error) {
+    // If MiniKit hooks fail, fall back to mock functions
+    console.warn('MiniKit hooks not available, using fallback functions');
+  }
+  
+  return {
+    isMiniApp,
+    miniKit: miniKitData || { setFrameReady: () => {}, isFrameReady: false, context: null },
+    addFrame: addFrame || (() => Promise.resolve(null)),
+    openUrl: openUrl || ((url: string) => { if (typeof window !== 'undefined') window.open(url, '_blank'); }),
+    close: close || (() => {}),
+    viewProfile: viewProfile || (() => {}),
+    sendNotification: sendNotification || (() => Promise.resolve())
+  };
+}
+
 export default function Page() {
-  const { setFrameReady, isFrameReady, context } = useMiniKit();
-  const addFrame = useAddFrame();
-  const openUrl = useOpenUrl();
-  const close = useClose();
-  const viewProfile = useViewProfile();
-  const sendNotification = useNotification();
+  const { isMiniApp, miniKit, addFrame, openUrl, close, viewProfile, sendNotification } = useMiniKitConditional();
+  const { setFrameReady, isFrameReady, context } = miniKit;
   
   const [activeTab, setActiveTab] = useState<'provide' | 'take' | 'portfolio'>('provide');
 
@@ -59,7 +110,7 @@ export default function Page() {
         </div>
         
         <div className="flex items-center space-x-2">
-          {context?.client.added && (
+          {isMiniApp && context?.client.added && (
             <button
               onClick={handleAddFrame}
               className="px-3 py-1 bg-blue-600 rounded-lg text-sm"
@@ -67,18 +118,22 @@ export default function Page() {
               SAVE
             </button>
           )}
-          <button
-            onClick={() => viewProfile()}
-            className="px-3 py-1 bg-transparent border border-blue-400 rounded-lg text-sm"
-          >
-            PROFILE
-          </button>
-          <button
-            onClick={close}
-            className="px-3 py-1 bg-transparent text-sm"
-          >
-            CLOSE
-          </button>
+          {isMiniApp && (
+            <>
+              <button
+                onClick={() => viewProfile()}
+                className="px-3 py-1 bg-transparent border border-blue-400 rounded-lg text-sm"
+              >
+                PROFILE
+              </button>
+              <button
+                onClick={close}
+                className="px-3 py-1 bg-transparent text-sm"
+              >
+                CLOSE
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -116,9 +171,9 @@ export default function Page() {
         <button
           type="button"
           className="px-4 py-2 rounded-2xl font-semibold opacity-60 border border-blue-400 text-xs"
-          onClick={() => openUrl('https://base.org/builders/minikit')}
+          onClick={() => openUrl(isMiniApp ? 'https://base.org/builders/minikit' : 'https://duration.finance')}
         >
-          BUILT ON BASE WITH MINIKIT
+          {isMiniApp ? 'BUILT ON BASE WITH MINIKIT' : 'DURATION.FINANCE - POWERED BY BASE'}
         </button>
       </footer>
     </div>

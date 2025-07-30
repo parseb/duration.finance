@@ -9,9 +9,8 @@ import { http, WagmiProvider, createConfig } from "wagmi";
 import { coinbaseWallet, metaMask, walletConnect, injected } from "wagmi/connectors";
 
 // Enhanced wallet configuration for standard web app
-const wagmiConfig = createConfig({
-  chains: [base, baseSepolia],
-  connectors: [
+const createWagmiConnectors = () => {
+  const connectors = [
     coinbaseWallet({
       appName: process.env.NEXT_PUBLIC_ONCHAINKIT_PROJECT_NAME || "Duration Finance",
       appLogoUrl: process.env.NEXT_PUBLIC_ICON_URL,
@@ -22,17 +21,31 @@ const wagmiConfig = createConfig({
         url: process.env.NEXT_PUBLIC_URL || "https://duration.finance",
       },
     }),
-    walletConnect({
-      projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "your-project-id",
-      metadata: {
-        name: "Duration Finance",
-        description: "Fully-collateralized options protocol",
-        url: process.env.NEXT_PUBLIC_URL || "https://duration.finance",
-        icons: [process.env.NEXT_PUBLIC_ICON_URL || "/logo.png"],
-      },
-    }),
     injected({ shimDisconnect: true }), // Fallback for other injected wallets
-  ],
+  ];
+
+  // Only add WalletConnect if we have a valid project ID
+  const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+  if (walletConnectProjectId && walletConnectProjectId !== "your-walletconnect-project-id") {
+    connectors.push(
+      walletConnect({
+        projectId: walletConnectProjectId,
+        metadata: {
+          name: "Duration Finance",
+          description: "Fully-collateralized options protocol",
+          url: process.env.NEXT_PUBLIC_URL || "https://duration.finance",
+          icons: [process.env.NEXT_PUBLIC_ICON_URL || "/logo.png"],
+        },
+      })
+    );
+  }
+
+  return connectors;
+};
+
+const wagmiConfig = createConfig({
+  chains: [base, baseSepolia],
+  connectors: createWagmiConnectors(),
   transports: {
     [base.id]: http(),
     [baseSepolia.id]: http(),

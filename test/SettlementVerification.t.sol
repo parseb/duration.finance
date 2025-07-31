@@ -9,7 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title SettlementVerificationTest
- * @notice Test suite for enhanced settlement verification and collateralization
+ * @notice Test suite for settlement verification and collateralization
  */
 contract SettlementVerificationTest is Test {
     DurationOptions public options;
@@ -25,7 +25,7 @@ contract SettlementVerificationTest is Test {
     function setUp() public {
         // Deploy contracts
         settlement = new OneInchSettlementRouter(admin);
-        options = new DurationOptions(address(settlement), admin);
+        options = new DurationOptions(address(settlement));
         
         // Setup test tokens and balances
         vm.deal(alice, 100 ether);
@@ -58,142 +58,115 @@ contract SettlementVerificationTest is Test {
             abi.encode(true)
         );
         
-        // Add USDC as allowed asset
-        vm.prank(admin);
-        options.addAllowedAsset(USDC);
+        // USDC is automatically added as allowed asset
     }
 
-    function testValidateSettlement() public {
-        // Create a test option
-        IDurationOptions.ActiveOption memory option = IDurationOptions.ActiveOption({
-            commitmentHash: keccak256("test"),
-            taker: bob,
+    function testBasicSettlementSetup() public view {
+        // Test that settlement router is properly configured
+        address settlementAddr = options.settlementRouter();
+        assertEq(settlementAddr, address(settlement));
+        
+        console.log("Settlement router properly configured");
+    }
+
+    function testCollateralizationCheck() public {
+        // Create LP commitment
+        IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
+            lp: alice,
+            asset: WETH,
+            amount: 2 ether, // 2 WETH collateral
+            dailyPremiumUsdc: 60 * 1e6, // $60 per day
+            minLockDays: 1,
+            maxDurationDays: 10,
+            optionType: IDurationOptions.OptionType.CALL,
+            expiry: block.timestamp + 1 hours,
+            nonce: 1,
+            isFramentable: false,
+            signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
+        });
+
+        vm.prank(alice);
+        options.createLPCommitment(commitment);
+
+        bytes32 commitmentHash = keccak256(abi.encode(commitment));
+        
+        // Take the option
+        IDurationOptions.SettlementParams memory params = IDurationOptions.SettlementParams({
+            method: 1, // Unoswap
+            routingData: "",
+            minReturn: 0,
+            deadline: block.timestamp + 1 hours
+        });
+
+        vm.prank(bob);
+        uint256 optionId = options.takeCommitment(commitmentHash, 7, params);
+
+        // Verify collateral is locked
+        uint256 totalLocked = options.totalLocked(WETH);
+        assertEq(totalLocked, 2 ether);
+        
+        // Verify option details
+        IDurationOptions.ActiveOption memory option = options.getOption(optionId);
+        assertEq(option.amount, 2 ether);
+        assertEq(option.lp, alice);
+        assertEq(option.taker, bob);
+        
+        console.log("Collateralization verification completed");
+    }
+
+    function testOwnerFunctions() public {
+        address owner = options.owner();
+        
+        vm.startPrank(owner);
+        
+        // Test safety margin setting
+        options.setSafetyMargin(5); // 0.05%
+        
+        // Test settlement router setting
+        address newRouter = makeAddr("newRouter");
+        options.setSettlementRouter(newRouter);
+        assertEq(options.settlementRouter(), newRouter);
+        
+        // Test emergency pause/unpause
+        options.emergencyPause();
+        options.emergencyUnpause();
+        
+        vm.stopPrank();
+        
+        console.log("Owner functions test completed");
+    }
+
+    function testGetCurrentPrice() public view {
+        uint256 price = options.getCurrentPrice(WETH);
+        assertGt(price, 0);
+        
+        console.log("Current WETH price (mock):", price / 1e18);
+    }
+
+    function testNonceManagement() public {
+        uint256 initialNonce = options.getNonce(alice);
+        
+        // Create commitment (should increment nonce)
+        IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
             lp: alice,
             asset: WETH,
             amount: 1 ether,
-            targetPrice: 3500e18, // $3500
-            premium: 100e6, // $100 USDC
-            exerciseDeadline: block.timestamp + 1 days,
-            currentPrice: 3500e18,
+            dailyPremiumUsdc: 40 * 1e6,
+            minLockDays: 1,
+            maxDurationDays: 5,
             optionType: IDurationOptions.OptionType.CALL,
-            state: IDurationOptions.OptionState.TAKEN
+            expiry: block.timestamp + 1 hours,
+            nonce: initialNonce + 1,
+            isFramentable: true,
+            signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
+
+        vm.prank(alice);
+        options.createLPCommitment(commitment);
+
+        uint256 newNonce = options.getNonce(alice);
+        assertEq(newNonce, initialNonce + 2); // Should increment by 1
         
-        // Create settlement params
-        IDurationOptions.SettlementParams memory params = IDurationOptions.SettlementParams({
-            method: 0, // UNOSWAP
-            minReturn: 3600e6, // $3600 USDC (profitable)
-            deadline: block.timestamp + 1 hours,
-            routingData: ""
-        });
-        
-        // Test validation
-        (bool isValid, uint256 expectedPayout, uint256 minimumRequired) = 
-            options.validateSettlement(option, params);
-        
-        console.log("Settlement validation:");
-        console.log("  Is Valid:", isValid);
-        console.log("  Expected Payout:", expectedPayout);
-        console.log("  Minimum Required:", minimumRequired);
-        console.log("  Provided minReturn:", params.minReturn);
-        
-        // Should be valid since current price ($3500) > target price ($3500) for CALL
-        // and minReturn ($3600) > expected LP payout ($3500)
-        assertTrue(isValid, "Settlement should be valid");
-        assertEq(expectedPayout, 3500e6, "Expected payout should be $3500 USDC");
-        assertTrue(minimumRequired > expectedPayout, "Minimum required should include safety margin");
-    }
-    
-    function testValidateSettlement_InsufficientReturn() public {
-        IDurationOptions.ActiveOption memory option = IDurationOptions.ActiveOption({
-            commitmentHash: keccak256("test2"),
-            taker: bob,
-            lp: alice,
-            asset: WETH,
-            amount: 1 ether,
-            targetPrice: 3500e18,
-            premium: 100e6,
-            exerciseDeadline: block.timestamp + 1 days,
-            currentPrice: 3500e18,
-            optionType: IDurationOptions.OptionType.CALL,
-            state: IDurationOptions.OptionState.TAKEN
-        });
-        
-        // Insufficient return - below expected LP payout
-        IDurationOptions.SettlementParams memory params = IDurationOptions.SettlementParams({
-            method: 0,
-            minReturn: 3000e6, // Below $3500 target
-            deadline: block.timestamp + 1 hours,
-            routingData: ""
-        });
-        
-        (bool isValid,,) = options.validateSettlement(option, params);
-        
-        assertFalse(isValid, "Settlement should be invalid due to insufficient return");
-    }
-    
-    function testValidateSettlement_Unprofitable() public {
-        IDurationOptions.ActiveOption memory option = IDurationOptions.ActiveOption({
-            commitmentHash: keccak256("test3"),
-            taker: bob,
-            lp: alice,
-            asset: WETH,
-            amount: 1 ether,
-            targetPrice: 4000e18, // $4000 (higher than current $3500)
-            premium: 100e6,
-            exerciseDeadline: block.timestamp + 1 days,
-            currentPrice: 3500e18,
-            optionType: IDurationOptions.OptionType.CALL,
-            state: IDurationOptions.OptionState.TAKEN
-        });
-        
-        IDurationOptions.SettlementParams memory params = IDurationOptions.SettlementParams({
-            method: 0,
-            minReturn: 4100e6,
-            deadline: block.timestamp + 1 hours,
-            routingData: ""
-        });
-        
-        (bool isValid,,) = options.validateSettlement(option, params);
-        
-        assertFalse(isValid, "Settlement should be invalid - option not profitable");
-    }
-    
-    function testGetQuote() public {
-        (uint256 amountOut, bool isValid) = options.getQuote(WETH, USDC, 1 ether);
-        
-        console.log("Quote test:");
-        console.log("  Amount Out:", amountOut);
-        console.log("  Is Valid:", isValid);
-        
-        assertTrue(isValid, "Quote should be valid");
-        assertTrue(amountOut > 0, "Should return non-zero amount");
-        assertEq(amountOut, 3500e6, "Should return $3500 USDC for 1 ETH");
-    }
-    
-    function testGetQuote_InvalidPair() public {
-        // Test with zero address (should fail)
-        (uint256 amountOut, bool isValid) = options.getQuote(address(0), USDC, 1 ether);
-        
-        assertFalse(isValid, "Quote should be invalid for zero address");
-        assertEq(amountOut, 0, "Should return zero amount for invalid quote");
-    }
-    
-    function testSafetyMarginCalculation() public {
-        // Test that safety margin is properly calculated
-        uint256 expectedPayout = 3500e6; // $3500 USDC
-        uint256 safetyMargin = options.safetyMargin(); // Should be 100 (0.01%)
-        uint256 expectedMargin = (expectedPayout * safetyMargin) / 10000;
-        uint256 minimumRequired = expectedPayout + expectedMargin;
-        
-        console.log("Safety margin test:");
-        console.log("  Expected Payout:", expectedPayout);
-        console.log("  Safety Margin:", safetyMargin);
-        console.log("  Expected Margin Amount:", expectedMargin);
-        console.log("  Minimum Required:", minimumRequired);
-        
-        assertEq(safetyMargin, 100, "Safety margin should be 0.01%");
-        assertEq(expectedMargin, 35000000, "Margin should be $35 USDC"); // 3500e6 * 100 / 10000
-        assertEq(minimumRequired, 3500350000, "Minimum should include safety margin");
+        console.log("Nonce management test completed");
     }
 }

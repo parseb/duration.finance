@@ -57,7 +57,7 @@ const queryClient = new QueryClient();
 
 // Helper to detect if we're in a Farcaster mini app environment
 function useIsMiniApp() {
-  const [isMiniApp, setIsMiniApp] = useState(false);
+  const [isMiniApp, setIsMiniApp] = useState<boolean | null>(null);
   
   useEffect(() => {
     // Check for Farcaster mini app environment
@@ -76,8 +76,17 @@ function useIsMiniApp() {
 export function Providers(props: { children: ReactNode }) {
   const isMiniApp = useIsMiniApp();
 
+  // Show loading during hydration
+  if (isMiniApp === null) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center">
+        <div className="text-white">Loading...</div>
+      </div>
+    );
+  }
+
   // Mini App Provider (Farcaster)
-  if (isMiniApp) {
+  if (isMiniApp === true) {
     return (
       <MiniKitProvider
         apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}

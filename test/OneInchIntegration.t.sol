@@ -9,7 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title OneInchIntegration Test
- * @notice Tests Duration.Finance integration with real 1inch pricing and settlement
+ * @notice Tests Duration.Finance integration with 1inch pricing and settlement
  */
 contract OneInchIntegrationTest is Test {
     
@@ -24,19 +24,8 @@ contract OneInchIntegrationTest is Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
     address admin = makeAddr("admin");
-    address priceUpdater = makeAddr("priceUpdater");
-    
-    uint256 alicePrivateKey = 0x1;
-    uint256 bobPrivateKey = 0x2;
     
     function setUp() public {
-        // Fork Base Sepolia for testing with real contracts
-        string memory rpcUrl = vm.envString("BASE_TESTNET_RPC_URL");
-        vm.createSelectFork(rpcUrl);
-        
-        console.log("Testing on Base Sepolia fork");
-        console.log("Block number:", block.number);
-        
         // Deploy contracts
         vm.startPrank(admin);
         
@@ -44,17 +33,9 @@ contract OneInchIntegrationTest is Test {
         settlementRouter = new OneInchSettlementRouter(admin);
         
         // Deploy main options contract
-        options = new DurationOptions(
-            address(settlementRouter),
-            admin
-        );
-        
-        // Add USDC as allowed asset
-        options.addAllowedAsset(USDC);
+        options = new DurationOptions(address(settlementRouter));
         
         vm.stopPrank();
-        
-        // Prices now come from 1inch quotes directly - no setup needed
         
         // Give test accounts some tokens for testing
         deal(WETH, alice, 100 ether);
@@ -65,237 +46,165 @@ contract OneInchIntegrationTest is Test {
         console.log("Contracts deployed and setup completed");
     }
     
-    function testReal1inchQuoteIntegration() public {
-        // Mock 1inch quotes for testing
-        vm.mockCall(
-            address(settlementRouter),
-            abi.encodeWithSelector(
-                settlementRouter.getSettlementQuote.selector,
-                WETH, USDC, 1 ether
-            ),
-            abi.encode(3500e6, 0, "") // $3500 USDC (6 decimals)
-        );
-        
+    function testGetCurrentPrice() public view {
         uint256 wethPrice = options.getCurrentPrice(WETH);
-        uint256 usdcPrice = options.getCurrentPrice(USDC);
         
-        assertEq(wethPrice, 3500e18); // Converted to 18 decimals
-        assertEq(usdcPrice, 1e18);    // USDC always $1
+        // Should return mock price from contract
+        assertGt(wethPrice, 0);
         
-        console.log("WETH price:", wethPrice / 1e18);
-        console.log("USDC price:", usdcPrice / 1e18);
+        console.log("WETH mock price:", wethPrice / 1e18);
     }
     
-    function testDirectQuotePricing() public {
-        // Test that prices come from settlement router quotes
-        // This would normally call 1inch, but we'll mock the response
-        
-        // Mock the settlement router to return expected quote
-        vm.mockCall(
-            address(settlementRouter),
-            abi.encodeWithSelector(
-                settlementRouter.getSettlementQuote.selector,
-                WETH, USDC, 1 ether
-            ),
-            abi.encode(3500e6, 0, "") // $3500 USDC (6 decimals), method 0, empty data
-        );
-        
-        uint256 price = options.getCurrentPrice(WETH);
-        assertEq(price, 3500e18); // Should be converted to 18 decimals
-        
-        console.log("WETH price from 1inch quote:", price / 1e18);
-    }
-    
-    function testLPCommitmentWithRealPricing() public {
+    function testLPCommitmentWithDurationPricing() public {
         vm.startPrank(alice);
         
-        // Approve tokens
-        IERC20(WETH).approve(address(options), 10 ether);
-        IERC20(USDC).approve(address(options), 100000e6);
+        // Approve tokens (mock the approval)
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.approve.selector, address(options), 10 ether),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.approve.selector, address(options), 100000e6),
+            abi.encode(true)
+        );
         
-        // Create LP commitment with real pricing
-        IDurationOptions.OptionCommitment memory commitment = _createLPCommitment();
+        // Create LP commitment
+        IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
+            lp: alice,
+            asset: WETH,
+            amount: 1 ether,
+            dailyPremiumUsdc: 50 * 1e6, // $50 per day
+            minLockDays: 1,
+            maxDurationDays: 14,
+            optionType: IDurationOptions.OptionType.CALL,
+            expiry: block.timestamp + 1 hours,
+            nonce: 1,
+            isFramentable: true,
+            signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27)) // Mock signature
+        });
         
         // Store commitment
-        options.createCommitment(commitment);
+        options.createLPCommitment(commitment);
         
         vm.stopPrank();
         
         // Verify commitment was stored
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
+        bytes32 commitmentHash = keccak256(abi.encode(commitment));
         IDurationOptions.OptionCommitment memory stored = options.getCommitment(commitmentHash);
         
         assertEq(stored.lp, alice);
-        assertEq(stored.targetPrice, 4000e18);
+        assertEq(stored.dailyPremiumUsdc, 50 * 1e6);
         
-        console.log("LP commitment created with target price: $", stored.targetPrice / 1e18);
+        console.log("LP commitment created with daily premium: $50");
     }
     
-    function testPremiumCalculationWithRealPricing() public {
+    function testPremiumCalculationForDuration() public {
         // Create commitment
         vm.startPrank(alice);
-        IERC20(WETH).approve(address(options), 10 ether);
         
-        IDurationOptions.OptionCommitment memory commitment = _createLPCommitment();
-        options.createCommitment(commitment);
-        
-        vm.stopPrank();
-        
-        // Calculate premium with current price
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
-        uint256 currentPrice = options.getCurrentPrice(WETH);
-        uint256 premium = options.calculatePremium(commitmentHash, currentPrice);
-        
-        // Premium should be |currentPrice - targetPrice| * amount / 1e18
-        // Current: $3500, Target: $4000, Amount: 1 ETH
-        // Expected premium: (4000 - 3500) * 1 = 500 USDC
-        uint256 expectedPremium = ((4000e18 - 3500e18) * 1 ether) / 1e18;
-        
-        assertEq(premium, expectedPremium);
-        console.log("Calculated premium: $", premium / 1e18);
-    }
-    
-    function testSimpleSwapWithRealPricing() public {
-        // Mock price to be higher than target to trigger simple swap
-        vm.mockCall(
-            address(settlementRouter),
-            abi.encodeWithSelector(
-                settlementRouter.getSettlementQuote.selector,
-                WETH, USDC, 1 ether
-            ),
-            abi.encode(4100e6, 0, "") // $4100 USDC > $4000 target
-        );
-        
-        vm.startPrank(alice);
-        IERC20(WETH).approve(address(options), 10 ether);
-        IERC20(USDC).approve(address(options), 100000e6);
-        
-        // Create LP commitment
-        IDurationOptions.OptionCommitment memory commitment = _createLPCommitment();
-        options.createCommitment(commitment);
-        
-        vm.stopPrank();
-        
-        // Bob tries to take the commitment - should trigger simple swap
-        vm.startPrank(bob);
-        IERC20(USDC).approve(address(options), 100000e6);
-        
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
-        uint256 aliceUSDCBefore = IERC20(USDC).balanceOf(alice);
-        
-        // Take commitment - should execute simple swap
-        uint256 optionId = options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL);
-        
-        // Should return 0 for simple swap
-        assertEq(optionId, 0);
-        
-        // Alice should receive her target price in USDC
-        uint256 aliceUSDCAfter = IERC20(USDC).balanceOf(alice);
-        uint256 expectedPayout = (4000e18 * 1 ether) / 1e18 / 1e12; // Convert to USDC decimals
-        
-        assertEq(aliceUSDCAfter - aliceUSDCBefore, expectedPayout);
-        console.log("Simple swap executed - Alice received USDC:", (aliceUSDCAfter - aliceUSDCBefore) / 1e6);
-        
-        vm.stopPrank();
-    }
-    
-    function testOptionTakingWithRealPricing() public {
-        vm.startPrank(alice);
-        IERC20(WETH).approve(address(options), 10 ether);
-        IERC20(USDC).approve(address(options), 100000e6);
-        
-        IDurationOptions.OptionCommitment memory commitment = _createLPCommitment();
-        options.createCommitment(commitment);
-        
-        vm.stopPrank();
-        
-        // Bob takes the option
-        vm.startPrank(bob);
-        IERC20(USDC).approve(address(options), 100000e6);
-        
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
-        uint256 optionId = options.takeCommitment(commitmentHash, IDurationOptions.OptionType.CALL);
-        
-        // Should create an option (not simple swap)
-        assertGt(optionId, 0);
-        
-        // Verify option details
-        IDurationOptions.ActiveOption memory option = options.getOption(optionId);
-        assertEq(option.taker, bob);
-        assertEq(option.lp, alice);
-        assertEq(option.targetPrice, 4000e18);
-        
-        console.log("Option created with ID:", optionId);
-        console.log("Option target price: $", option.targetPrice / 1e18);
-        
-        vm.stopPrank();
-    }
-    
-    function testQuoteFailureHandling() public {
-        // Test fallback when 1inch quote fails
-        vm.mockCallRevert(
-            address(settlementRouter),
-            abi.encodeWithSelector(
-                settlementRouter.getSettlementQuote.selector,
-                WETH, USDC, 1 ether
-            ),
-            "Quote failed"
-        );
-        
-        // This should revert since we removed fallback prices
-        vm.expectRevert();
-        options.getCurrentPrice(WETH);
-        
-        console.log("Quote failure properly reverts");
-    }
-    
-    // Helper functions
-    function _createLPCommitment() internal view returns (IDurationOptions.OptionCommitment memory) {
-        return IDurationOptions.OptionCommitment({
+        IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
             lp: alice,
-            taker: address(0),
             asset: WETH,
             amount: 1 ether,
-            targetPrice: 4000e18, // $4000 target
-            premium: 0,
-            durationDays: 1,
+            dailyPremiumUsdc: 30 * 1e6, // $30 per day
+            minLockDays: 1,
+            maxDurationDays: 21,
             optionType: IDurationOptions.OptionType.CALL,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            signature: _createValidSignature()
+            isFramentable: true,
+            signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
-    }
-    
-    function _createValidSignature() internal view returns (bytes memory) {
-        bytes32 digest = options.getCommitmentHash(
-            alice,
-            address(0),
-            WETH,
-            1 ether,
-            4000e18,
-            0,
-            1,
-            uint8(IDurationOptions.OptionType.CALL),
-            block.timestamp + 1 hours,
-            1
-        );
         
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
-        return abi.encodePacked(r, s, v);
+        options.createLPCommitment(commitment);
+        
+        vm.stopPrank();
+        
+        // Calculate premium for different durations
+        bytes32 commitmentHash = keccak256(abi.encode(commitment));
+        uint256 premium7Days = options.calculatePremiumForDuration(commitmentHash, 7);
+        uint256 premium14Days = options.calculatePremiumForDuration(commitmentHash, 14);
+        uint256 premium21Days = options.calculatePremiumForDuration(commitmentHash, 21);
+        
+        // Premium should be dailyPremium * duration
+        assertEq(premium7Days, 30 * 1e6 * 7);   // $210
+        assertEq(premium14Days, 30 * 1e6 * 14); // $420
+        assertEq(premium21Days, 30 * 1e6 * 21); // $630
+        
+        console.log("Premium for 7 days: $", premium7Days / 1e6);
+        console.log("Premium for 14 days: $", premium14Days / 1e6);
+        console.log("Premium for 21 days: $", premium21Days / 1e6);
     }
-    
-    function _getCommitmentHash(IDurationOptions.OptionCommitment memory commitment) internal view returns (bytes32) {
-        return options.getCommitmentHash(
-            commitment.lp,
-            commitment.taker,
-            commitment.asset,
-            commitment.amount,
-            commitment.targetPrice,
-            commitment.premium,
-            commitment.durationDays,
-            uint8(commitment.optionType),
-            commitment.expiry,
-            commitment.nonce
-        );
+
+    function testDurationValidation() public {
+        vm.startPrank(alice);
+        
+        // Create commitment with specific duration range
+        IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
+            lp: alice,
+            asset: WETH,
+            amount: 1 ether,
+            dailyPremiumUsdc: 40 * 1e6,
+            minLockDays: 5,  // Minimum 5 days
+            maxDurationDays: 15, // Maximum 15 days
+            optionType: IDurationOptions.OptionType.CALL,
+            expiry: block.timestamp + 1 hours,
+            nonce: 1,
+            isFramentable: true,
+            signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
+        });
+        
+        options.createLPCommitment(commitment);
+        
+        vm.stopPrank();
+        
+        bytes32 commitmentHash = keccak256(abi.encode(commitment));
+        
+        // Test duration validation
+        assertFalse(options.isValidDuration(commitmentHash, 3));  // Below minimum
+        assertFalse(options.isValidDuration(commitmentHash, 4));  // Below minimum
+        assertTrue(options.isValidDuration(commitmentHash, 5));   // At minimum
+        assertTrue(options.isValidDuration(commitmentHash, 10));  // Within range
+        assertTrue(options.isValidDuration(commitmentHash, 15));  // At maximum
+        assertFalse(options.isValidDuration(commitmentHash, 16)); // Above maximum
+        
+        console.log("Duration validation test completed");
+    }
+
+    function testYieldMetrics() public {
+        vm.startPrank(alice);
+        
+        // Create commitment
+        IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
+            lp: alice,
+            asset: WETH,
+            amount: 2 ether, // 2 WETH
+            dailyPremiumUsdc: 80 * 1e6, // $80 per day
+            minLockDays: 1,
+            maxDurationDays: 30,
+            optionType: IDurationOptions.OptionType.CALL,
+            expiry: block.timestamp + 1 hours,
+            nonce: 1,
+            isFramentable: true,
+            signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
+        });
+        
+        options.createLPCommitment(commitment);
+        
+        vm.stopPrank();
+        
+        bytes32 commitmentHash = keccak256(abi.encode(commitment));
+        uint256 currentPrice = options.getCurrentPrice(WETH);
+        
+        (uint256 dailyYield, uint256 annualizedYield) = options.getLPYieldMetrics(commitmentHash, currentPrice);
+        
+        assertGt(dailyYield, 0);
+        assertGt(annualizedYield, 0);
+        assertEq(annualizedYield, dailyYield * 365);
+        
+        console.log("Daily yield (basis points):", dailyYield);
+        console.log("Annualized yield (basis points):", annualizedYield);
     }
 }

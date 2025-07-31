@@ -69,10 +69,7 @@ contract DeployDurationFinance is Script {
     ) internal returns (address) {
         console.log("\n2. Deploying DurationOptions...");
         
-        DurationOptions options = new DurationOptions(
-            _settlementRouter,
-            deployer
-        );
+        DurationOptions options = new DurationOptions(_settlementRouter);
         
         console.log("   DurationOptions deployed:", address(options));
         return address(options);
@@ -86,9 +83,9 @@ contract DeployDurationFinance is Script {
         
         DurationOptions options = DurationOptions(payable(durationOptions));
         
-        // Add USDC as allowed asset
-        options.addAllowedAsset(USDC_BASE);
-        console.log("   USDC added as allowed asset");
+        // USDC is automatically added in constructor
+        // WETH is also automatically added as allowed asset
+        console.log("   WETH and USDC configured as allowed assets");
         
         console.log("   Configuration completed!");
     }

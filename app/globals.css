@@ -23,3 +23,112 @@ body {
   font-style: normal;
   font-size: 80%;
 }
+
+/* Custom range slider styles for mobile-friendly dual range */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-track {
+  background: rgb(30 58 138); /* blue-800 */
+  height: 8px;
+  border-radius: 4px;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgb(234 179 8); /* yellow-500 */
+  height: 20px;
+  width: 20px;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+}
+
+.slider::-moz-range-track {
+  background: rgb(30 58 138); /* blue-800 */
+  height: 8px;
+  border-radius: 4px;
+  border: none;
+}
+
+.slider::-moz-range-thumb {
+  background: rgb(234 179 8); /* yellow-500 */
+  height: 20px;
+  width: 20px;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+}
+
+.slider:focus {
+  outline: none;
+}
+
+.slider:focus::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.3);
+}
+
+.slider:focus::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.3);
+}
+
+/* Mobile-friendly touch targets */
+@media (max-width: 768px) {
+  .slider::-webkit-slider-thumb {
+    height: 24px;
+    width: 24px;
+  }
+  
+  .slider::-moz-range-thumb {
+    height: 24px;
+    width: 24px;
+  }
+}
+
+/* Chart bars hover effect */
+.chart-bar {
+  transition: all 0.2s ease-in-out;
+}
+
+.chart-bar:hover {
+  transform: scale(1.05);
+}
+
+/* Smooth transitions for mobile interactions */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, input, select {
+  touch-action: manipulation;
+}
+
+/* Custom scrollbar for chart area */
+.chart-container::-webkit-scrollbar {
+  height: 6px;
+}
+
+.chart-container::-webkit-scrollbar-track {
+  background: rgb(30 58 138);
+  border-radius: 3px;
+}
+
+.chart-container::-webkit-scrollbar-thumb {
+  background: rgb(59 130 246);
+  border-radius: 3px;
+}
+
+.chart-container::-webkit-scrollbar-thumb:hover {
+  background: rgb(37 99 235);
+}

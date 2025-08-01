@@ -62,46 +62,57 @@ export function WalletConnection() {
     );
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      {/* OnchainKit Default Connect Button */}
+  // Show different UI based on environment
+  if (isMiniApp) {
+    // Mini app environment - use OnchainKit default
+    return (
       <ConnectWallet>
         <Avatar className="h-6 w-6" />
         <Name />
       </ConnectWallet>
+    );
+  }
 
-      {/* Custom Wallet Selection */}
-      <div className="flex flex-col gap-2">
-        <button
-          onClick={() => setShowWalletOptions(!showWalletOptions)}
-          className="text-sm text-blue-300 hover:text-blue-100 underline"
-        >
-          {showWalletOptions ? "Hide" : "Show"} all wallet options
-        </button>
+  // Regular web environment - show specific wallet options
+  const targetWallets = ['Coinbase Wallet', 'MetaMask', 'WalletConnect', 'Injected'];
+  const filteredConnectors = connectors.filter(connector => 
+    targetWallets.some(target => connector.name.includes(target) || target === connector.name)
+  );
 
-        {showWalletOptions && (
-          <div className="grid grid-cols-2 gap-2 p-4 bg-blue-800/30 rounded-lg">
-            {connectors.map((connector) => (
-              <button
-                key={connector.uid}
-                onClick={() => {
-                  connect({ connector });
-                  setShowWalletOptions(false);
-                }}
-                className="flex items-center gap-2 p-3 bg-blue-700/50 hover:bg-blue-600/50 rounded-lg transition-colors"
-              >
-                <WalletIcon name={connector.name} />
-                <span className="text-sm font-medium">{connector.name}</span>
-              </button>
-            ))}
-          </div>
-        )}
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="text-center mb-2">
+        <h3 className="text-lg font-semibold text-white mb-1">Connect Wallet</h3>
+        <p className="text-sm text-blue-200">Choose your preferred wallet to get started</p>
+      </div>
+
+      <div className="grid grid-cols-4 gap-3">
+        {filteredConnectors.map((connector) => {
+          const walletInfo = getWalletInfo(connector.name);
+          return (
+            <button
+              key={connector.uid}
+              onClick={() => connect({ connector })}
+              className="flex flex-col items-center gap-3 p-4 bg-blue-700/50 hover:bg-blue-600/70 rounded-lg transition-all hover:scale-105 border border-blue-600/30 hover:border-blue-500"
+            >
+              <WalletIcon name={connector.name} size="large" />
+              <div className="text-center">
+                <div className="font-medium text-white text-xs">{getDisplayName(connector.name)}</div>
+                {walletInfo.badge && (
+                  <div className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full mt-1">
+                    {walletInfo.badge}
+                  </div>
+                )}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function WalletIcon({ name }: { name: string }) {
+function WalletIcon({ name, size = "normal" }: { name: string; size?: "normal" | "large" }) {
   const iconMap: Record<string, string> = {
     "Coinbase Wallet": "🔵",
     "MetaMask": "🦊", 
@@ -109,7 +120,38 @@ function WalletIcon({ name }: { name: string }) {
     "Injected": "💼",
   };
 
-  return <span className="text-lg">{iconMap[name] || "🔑"}</span>;
+  const sizeClass = size === "large" ? "text-3xl" : "text-lg";
+  return <span className={sizeClass}>{iconMap[name] || "🔑"}</span>;
+}
+
+function getWalletInfo(name: string) {
+  const walletInfoMap: Record<string, { description: string; badge?: string }> = {
+    "Coinbase Wallet": { 
+      description: "Coinbase's self-custody wallet", 
+      badge: "Recommended" 
+    },
+    "MetaMask": { 
+      description: "Most popular Ethereum wallet", 
+      badge: "Popular" 
+    },
+    "WalletConnect": { 
+      description: "Connect 100+ mobile wallets" 
+    },
+    "Injected": { 
+      description: "Browser extension wallet" 
+    },
+  };
+
+  return walletInfoMap[name] || { description: "Connect your wallet" };
+}
+
+function getDisplayName(name: string) {
+  // Clean up connector names for display
+  if (name.includes('Coinbase')) return 'Coinbase';
+  if (name.includes('MetaMask')) return 'MetaMask';
+  if (name.includes('WalletConnect')) return 'WalletConnect';
+  if (name === 'Injected') return 'Browser';
+  return name;
 }
 
 // Export the wallet configuration info

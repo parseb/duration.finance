@@ -56,71 +56,76 @@ contract DurationOptionsTest is Test {
     }
 
     function testCreateLPCommitment() public {
-        // Create a basic LP commitment
+        // LP commitments are now handled off-chain only
         IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
         
         vm.startPrank(alice);
         
-        // Should not revert for valid commitment
-        options.createLPCommitment(commitment);
+        // Mock USDC balance and allowance for commitment fee
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.balanceOf.selector, alice),
+            abi.encode(10000 * 1e6) // 10k USDC
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.allowance.selector, alice, address(options)),
+            abi.encode(10000 * 1e6)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transferFrom.selector, alice, address(options), 1000000),
+            abi.encode(true)
+        );
+        
+        // Should work with unified createCommitment
+        options.createCommitment(commitment);
         
         vm.stopPrank();
     }
 
     function testCalculatePremiumForDuration() public {
         IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
         
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
+        uint256 premium = options.calculatePremiumForDuration(commitment, 7);
         
-        uint256 premium = options.calculatePremiumForDuration(commitmentHash, 7);
-        
-        // Premium should be dailyPremiumUsdc * duration
+        // Premium should be premiumAmount * duration for LP_OFFER
         // 25 USDC/day * 7 days = 175 USDC
         assertEq(premium, 175 * 1e6);
     }
 
     function testIsValidDuration() public {
         IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
-        
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
         
         // Test valid durations (1-7 days based on commitment)
-        assertTrue(options.isValidDuration(commitmentHash, 1));
-        assertTrue(options.isValidDuration(commitmentHash, 7));
+        assertTrue(options.isValidDuration(commitment, 1));
+        assertTrue(options.isValidDuration(commitment, 7));
         
         // Test invalid durations
-        assertFalse(options.isValidDuration(commitmentHash, 0));
-        assertFalse(options.isValidDuration(commitmentHash, 8));
+        assertFalse(options.isValidDuration(commitment, 0));
+        assertFalse(options.isValidDuration(commitment, 8));
     }
 
     function testGetLPYieldMetrics() public {
         IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
-        
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
         
         uint256 currentPrice = options.getCurrentPrice(WETH);
-        (uint256 dailyYield, uint256 annualizedYield) = options.getLPYieldMetrics(commitmentHash, currentPrice);
+        (uint256 dailyYield, uint256 annualizedYield) = options.getLPYieldMetrics(commitment, currentPrice);
+        
+        // Calculate expected values using the new decimal-adjusted method
+        uint256 expectedCollateralValueUsdc = (commitment.amount * currentPrice) / 1e30; // Same as contract
+        uint256 expectedDailyYield = (commitment.premiumAmount * 10000) / expectedCollateralValueUsdc;
         
         // Should calculate yield based on daily premium vs collateral value
+        assertEq(dailyYield, expectedDailyYield);
+        assertEq(annualizedYield, expectedDailyYield * 365);
         assertGt(dailyYield, 0);
         assertGt(annualizedYield, 0);
-        assertEq(annualizedYield, dailyYield * 365);
     }
 
     function testTakeCommitment() public {
         // Setup commitment
         IDurationOptions.OptionCommitment memory commitment = _createTestCommitment();
-        bytes32 commitmentHash = _getCommitmentHash(commitment);
-        
-        // Store commitment (simulating frontend flow)
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
 
         // Mock WETH and USDC transfers
         vm.mockCall(
@@ -129,7 +134,7 @@ contract DurationOptionsTest is Test {
             abi.encode(true)
         );
         
-        uint256 premium = options.calculatePremiumForDuration(commitmentHash, 7);
+        uint256 premium = options.calculatePremiumForDuration(commitment, 7);
         
         // Mock USDC transfers for premium payment
         vm.mockCall(
@@ -143,6 +148,18 @@ contract DurationOptionsTest is Test {
             abi.encode(true)
         );
 
+        // Mock LP balance and allowance checks
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.balanceOf.selector, alice),
+            abi.encode(10 ether)
+        );
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.allowance.selector, alice, address(options)),
+            abi.encode(10 ether)
+        );
+
         // Take option
         vm.startPrank(bob);
         
@@ -153,7 +170,7 @@ contract DurationOptionsTest is Test {
             deadline: block.timestamp + 1 hours
         });
         
-        try options.takeCommitment(commitmentHash, 7, params) returns (uint256 optionId) {
+        try options.takeCommitment(commitment, 7, params) returns (uint256 optionId) {
             assertEq(optionId, 1);
         } catch Error(string memory reason) {
             console.log("Error reason:", reason);
@@ -214,13 +231,14 @@ contract DurationOptionsTest is Test {
 
     function _createTestCommitment() internal view returns (IDurationOptions.OptionCommitment memory) {
         return IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
             amount: 0.5 ether, // Reduced to fit new limits
-            dailyPremiumUsdc: 25 * 1e6, // $25 per day in USDC
-            minLockDays: 1,
+            premiumAmount: 25 * 1e6, // $25 per day in USDC for LP_OFFER
+            minDurationDays: 1,
             maxDurationDays: 7,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,

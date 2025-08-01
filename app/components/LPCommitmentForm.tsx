@@ -3,19 +3,15 @@
 import { useState } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseEther, parseUnits, Address } from 'viem';
-import { LPCommitmentStruct, createLPCommitmentMessage, signLPCommitment } from '../../lib/eip712/lp-commitment';
-import { SUPPORTED_ASSETS, DURATION_LIMITS, PREMIUM_LIMITS, POSITION_LIMITS } from '../../lib/api/duration-options';
-import { useX402API, X402PaymentInfo } from '../../lib/x402/client';
+import { SignedLPCommitment, LPCommitment } from '../../lib/eip712/verification';
 
 interface LPCommitmentFormProps {
-  onSuccess?: (commitmentHash: string) => void;
+  onSuccess?: (commitmentId: string) => void;
   onError?: (error: string) => void;
 }
 
 export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) {
   const { address, isConnected } = useAccount();
-  const { writeContract } = useWriteContract();
-  const { createLPCommitmentWithPayment } = useX402API();
   
   // Form state
   const [amount, setAmount] = useState('');
@@ -25,7 +21,6 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
   const [optionType, setOptionType] = useState<'CALL' | 'PUT'>('CALL');
   const [isFramentable, setIsFramentable] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [paymentInfo, setPaymentInfo] = useState<X402PaymentInfo | null>(null);
   
   // Mock current price - in real app this would come from 1inch API
   const currentPrice = 3836.50;
@@ -41,12 +36,20 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
   const dailyYield = totalCollateral > 0 ? ((dailyPremiumNum / totalCollateral) * 100) : 0;
   const annualizedYield = dailyYield * 365;
 
+  // Constants for validation
+  const WETH_BASE = '0x4200000000000000000000000000000000000006';
+  const MIN_WETH = 0.001;
+  const MAX_WETH = 1;
+  const MIN_DAILY_USDC = 0.01;
+  const MIN_DAYS = 1;
+  const MAX_DAYS = 365;
+
   // Validation
   const isValid = 
-    amountNum >= POSITION_LIMITS.MIN_WETH && amountNum <= POSITION_LIMITS.MAX_WETH &&
-    dailyPremiumNum >= PREMIUM_LIMITS.MIN_DAILY_USDC &&
-    minLockNum >= DURATION_LIMITS.MIN_DAYS &&
-    maxDurationNum <= DURATION_LIMITS.MAX_DAYS &&
+    amountNum >= MIN_WETH && amountNum <= MAX_WETH &&
+    dailyPremiumNum >= MIN_DAILY_USDC &&
+    minLockNum >= MIN_DAYS &&
+    maxDurationNum <= MAX_DAYS &&
     minLockNum <= maxDurationNum &&
     isConnected;
 
@@ -60,45 +63,58 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
     setIsSubmitting(true);
 
     try {
-      // Create commitment message for signing
-      const message = createLPCommitmentMessage({
-        lp: address,
-        asset: SUPPORTED_ASSETS.WETH,
-        amount: amount,
-        dailyPremiumUsdc: dailyPremium,
-        minLockDays: minLockNum,
-        maxDurationDays: maxDurationNum,
-        optionType: optionType,
-        expiryHours: 24, // 24 hour expiry
-      });
+      // Create commitment struct
+      const expiry = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours from now
+      const nonce = Math.floor(Math.random() * 1000000); // Random nonce
 
       // For now, create a mock signature - in production, would use wallet signing
       const mockSignature = '0x' + '0'.repeat(130) as `0x${string}`;
       
-      const commitment: LPCommitmentStruct = {
+      const commitment: SignedLPCommitment = {
         lp: address,
-        asset: SUPPORTED_ASSETS.WETH,
-        amount: parseEther(amount).toString(),
-        dailyPremiumUsdc: parseUnits(dailyPremium, 6).toString(), // USDC has 6 decimals
-        minLockDays: minLockNum,
-        maxDurationDays: maxDurationNum,
+        asset: WETH_BASE as `0x${string}`,
+        amount: parseEther(amount),
+        dailyPremiumUsdc: parseUnits(dailyPremium, 6),
+        minLockDays: BigInt(minLockNum),
+        maxDurationDays: BigInt(maxDurationNum),
         optionType: optionType === 'CALL' ? 0 : 1,
-        expiry: message.expiry.toString(),
-        nonce: message.nonce.toString(),
+        expiry: BigInt(expiry),
+        nonce: BigInt(nonce),
         isFramentable: isFramentable,
         signature: mockSignature,
       };
 
-      // Use x402 API client for database storage (requires 1 USDC payment)
-      const result = await createLPCommitmentWithPayment(
-        commitment,
-        (info: X402PaymentInfo) => {
-          setPaymentInfo(info);
-          // Show payment required UI
-        }
-      );
+      // Convert BigInt values to strings for JSON serialization
+      const commitmentForAPI = {
+        lp: commitment.lp,
+        asset: commitment.asset,
+        amount: commitment.amount.toString(),
+        dailyPremiumUsdc: commitment.dailyPremiumUsdc.toString(),
+        minLockDays: commitment.minLockDays.toString(),
+        maxDurationDays: commitment.maxDurationDays.toString(),
+        optionType: commitment.optionType,
+        expiry: commitment.expiry.toString(),
+        nonce: commitment.nonce.toString(),
+        isFramentable: commitment.isFramentable,
+        signature: commitment.signature,
+      };
 
-      onSuccess?.(result.id);
+      // Store commitment via API
+      const response = await fetch('/api/commitments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(commitmentForAPI),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to store commitment');
+      }
+
+      const result = await response.json();
+      onSuccess?.(result.commitmentId);
     } catch (error) {
       console.error('Failed to create LP commitment:', error);
       onError?.('Failed to create commitment. Please try again.');
@@ -136,16 +152,16 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
           </div>
           
           <div>
-            <label className="block text-sm font-medium mb-2">Amount ({POSITION_LIMITS.MIN_WETH} - {POSITION_LIMITS.MAX_WETH} WETH)</label>
+            <label className="block text-sm font-medium mb-2">Amount ({MIN_WETH} - {MAX_WETH} WETH)</label>
             <input
               type="number"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="w-full bg-blue-700 border border-blue-600 rounded-lg px-3 py-2 text-white placeholder-blue-300"
-              placeholder={POSITION_LIMITS.MIN_WETH.toString()}
+              placeholder={MIN_WETH.toString()}
               step="0.001"
-              min={POSITION_LIMITS.MIN_WETH}
-              max={POSITION_LIMITS.MAX_WETH}
+              min={MIN_WETH}
+              max={MAX_WETH}
               required
             />
             {amountNum > 0 && (

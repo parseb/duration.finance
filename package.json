@@ -27,7 +27,11 @@
     "docker:infra": "docker compose -f docker-compose.dev.yml up postgres redis -d",
     "docker:infra:stop": "docker compose -f docker-compose.dev.yml stop postgres redis",
     
-    "containers:clean": "docker compose -f docker-compose.dev.yml down -v && docker compose down -v"
+    "containers:clean": "docker compose -f docker-compose.dev.yml down -v && docker compose down -v",
+    
+    "db:init": "psql $DATABASE_URL -f database/init.sql",
+    "db:schema": "psql $DATABASE_URL -f database/schema.sql",
+    "db:reset": "npm run db:schema"
   },
   "dependencies": {
     "@coinbase/onchainkit": "latest",
@@ -39,12 +43,16 @@
     "@tanstack/react-query": "^5",
     "viem": "^2.27.2",
     "wagmi": "^2.14.11",
-    "pino-pretty": "^13.0.0"
+    "pino-pretty": "^13.0.0",
+    "pg": "^8.12.0",
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/pg": "^8.12.0",
+    "@types/uuid": "^10.0.0",
     "eslint": "^8",
     "eslint-config-next": "15.3.3",
     "eslint-config-prettier": "^10.1.1",

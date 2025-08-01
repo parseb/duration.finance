@@ -1,281 +1,165 @@
-// x402 Client Helper
-// Client-side utilities for handling x402 payment requirements
-
-import { Address, parseUnits, formatUnits } from 'viem';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { createPaymentProof, PaymentProof } from './payment-middleware';
+/**
+ * x402 Payment Client for Duration.Finance
+ * Handles payment required API endpoints
+ */
 
 export interface X402PaymentInfo {
-  required: boolean;
-  cost: string;
-  recipient: Address;
-  methods: string[];
-  instructions: {
-    step1: string;
-    step2: string;
-    step3: string;
-  };
+  amount: number;
+  token: string;
+  recipient: string;
+  chainId: number;
+  description: string;
 }
 
-export interface X402Error extends Error {
-  status: 402;
-  paymentInfo: X402PaymentInfo;
+export interface X402Response {
+  error: string;
+  code: number;
+  message: string;
+  payment: X402PaymentInfo;
+  instructions: string;
+}
+
+export interface CommitmentCreateRequest {
+  lp: string;
+  asset: string;
+  amount: string;
+  dailyPremiumUsdc: string;
+  minLockDays: string;
+  maxDurationDays: string;
+  optionType: number;
+  expiry: string;
+  nonce: string;
+  isFramentable: boolean;
+  signature: string;
 }
 
 export class X402Client {
   private baseUrl: string;
+  private paymentHash?: string;
+  private paymentAmount?: string;
 
-  constructor(baseUrl = '/api') {
+  constructor(baseUrl: string = '') {
     this.baseUrl = baseUrl;
   }
 
   /**
-   * Make API request with x402 payment handling
+   * Set payment information after making payment transaction
    */
-  async request<T>(
-    endpoint: string,
-    options: RequestInit = {},
-    paymentProof?: PaymentProof
-  ): Promise<T> {
-    const headers = new Headers(options.headers);
-    
-    // Add payment proof if provided
-    if (paymentProof) {
-      headers.set('X-Payment-Proof', JSON.stringify(paymentProof));
+  setPayment(transactionHash: string, amountUsdc: number) {
+    this.paymentHash = transactionHash;
+    this.paymentAmount = (amountUsdc * 1e6).toString(); // Convert to USDC wei
+  }
+
+  /**
+   * Create LP commitment with x402 payment
+   */
+  async createCommitment(commitment: CommitmentCreateRequest): Promise<any> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    // Add payment headers if available
+    if (this.paymentHash && this.paymentAmount) {
+      headers['X-Payment-Hash'] = this.paymentHash;
+      headers['X-Payment-Amount'] = this.paymentAmount;
     }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      ...options,
+    const response = await fetch(`${this.baseUrl}/api/x402/commitments`, {
+      method: 'POST',
       headers,
+      body: JSON.stringify(commitment),
     });
 
-    // Handle payment required response
     if (response.status === 402) {
-      const paymentInfo = await this.parsePaymentResponse(response);
-      const error = new Error('Payment Required') as X402Error;
-      error.status = 402;
-      error.paymentInfo = paymentInfo;
-      throw error;
+      // Payment required
+      const x402Data: X402Response = await response.json();
+      throw new PaymentRequiredError(x402Data);
     }
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Request failed with status ${response.status}`);
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to create commitment');
     }
 
     return response.json();
   }
 
   /**
-   * Parse x402 payment response
+   * Read commitments (free)
    */
-  private async parsePaymentResponse(response: Response): Promise<X402PaymentInfo> {
-    const data = await response.json();
-    
-    return {
-      required: true,
-      cost: response.headers.get('X-Payment-Cost') || data.cost || '1.0 USDC',
-      recipient: (response.headers.get('X-Payment-Recipient') || data.recipient) as Address,
-      methods: response.headers.get('X-Payment-Methods')?.split(',') || data.methods || ['ERC20-USDC'],
-      instructions: data.instructions || {
-        step1: 'Send the required USDC amount to the recipient address',
-        step2: 'Include the transaction hash in the X-Payment-Proof header',
-        step3: 'Retry the request with the payment proof',
-      },
-    };
-  }
-
-  /**
-   * Create LP commitment with payment handling
-   */
-  async createLPCommitment(commitment: any): Promise<any> {
-    try {
-      return await this.request('/commitments/lp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(commitment),
-      });
-    } catch (error) {
-      if (this.isX402Error(error)) {
-        // Handle payment requirement
-        throw error; // Let the UI handle payment
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Take commitment with payment handling
-   */
-  async takeCommitment(commitmentId: string, data: any): Promise<any> {
-    try {
-      return await this.request(`/commitments/${commitmentId}/take`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-    } catch (error) {
-      if (this.isX402Error(error)) {
-        throw error; // Let the UI handle payment
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Get marketplace liquidity (free)
-   */
-  async getMarketplaceLiquidity(filters: any = {}): Promise<any> {
+  async getCommitments(filters?: {
+    creator?: string;
+    type?: string;
+    lp?: string;
+  }): Promise<any> {
     const params = new URLSearchParams();
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        params.set(key, value.toString());
-      }
-    });
+    if (filters?.creator) params.append('creator', filters.creator);
+    if (filters?.type) params.append('type', filters.type);
+    if (filters?.lp) params.append('lp', filters.lp);
 
-    return this.request(`/marketplace/liquidity?${params}`);
+    const url = `${this.baseUrl}/api/x402/commitments${params.toString() ? '?' + params.toString() : ''}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to fetch commitments');
+    }
+
+    return response.json();
   }
+}
 
-  /**
-   * Check if error is x402 payment required
-   */
-  isX402Error(error: any): error is X402Error {
-    return error.status === 402;
+export class PaymentRequiredError extends Error {
+  public paymentInfo: X402PaymentInfo;
+  public instructions: string;
+
+  constructor(x402Response: X402Response) {
+    super(x402Response.message);
+    this.name = 'PaymentRequiredError';
+    this.paymentInfo = x402Response.payment;
+    this.instructions = x402Response.instructions;
   }
 }
 
 /**
- * React hook for x402 payments
+ * Example usage:
+ * 
+ * const client = new X402Client('http://localhost:3001');
+ * 
+ * try {
+ *   // This will throw PaymentRequiredError on first attempt
+ *   await client.createCommitment(commitmentData);
+ * } catch (error) {
+ *   if (error instanceof PaymentRequiredError) {
+ *     // Show payment UI to user
+ *     console.log('Payment required:', error.paymentInfo);
+ *     
+ *     // After user pays, set payment info and retry
+ *     client.setPayment('0x123...', 1); // $1 USDC
+ *     const result = await client.createCommitment(commitmentData);
+ *   }
+ * }
  */
-export function useX402Payment() {
-  const { address } = useAccount();
-  const { writeContract } = useWriteContract();
-  
-  /**
-   * Execute USDC payment for x402
-   */
-  const executePayment = async (
-    amount: string,
-    recipient: Address
-  ): Promise<PaymentProof> => {
-    if (!address) {
-      throw new Error('Wallet not connected');
+
+// React hook for x402 API (optional)
+export function useX402API(baseUrl?: string) {
+  const client = new X402Client(baseUrl);
+
+  const createCommitmentWithPayment = async (
+    commitment: CommitmentCreateRequest,
+    paymentTxHash?: string,
+    paymentAmount?: number
+  ) => {
+    if (paymentTxHash && paymentAmount) {
+      client.setPayment(paymentTxHash, paymentAmount);
     }
-
-    const usdcAddress = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address; // Base USDC
-    const amountWei = parseUnits(amount, 6); // USDC has 6 decimals
-
-    // Execute USDC transfer
-    const txHash = await writeContract({
-      abi: [
-        {
-          name: 'transfer',
-          type: 'function',
-          stateMutability: 'nonpayable',
-          inputs: [
-            { name: 'to', type: 'address' },
-            { name: 'amount', type: 'uint256' },
-          ],
-          outputs: [{ name: '', type: 'bool' }],
-        },
-      ],
-      address: usdcAddress,
-      functionName: 'transfer',
-      args: [recipient, amountWei],
-    });
-
-    // Create payment proof
-    return createPaymentProof(
-      txHash,
-      amountWei.toString(),
-      recipient,
-      address
-    );
-  };
-
-  return {
-    executePayment,
-  };
-}
-
-/**
- * React hook for x402-enabled API client
- */
-export function useX402API() {
-  const client = new X402Client();
-  const { executePayment } = useX402Payment();
-
-  /**
-   * Create LP commitment with automatic payment handling
-   */
-  const createLPCommitmentWithPayment = async (
-    commitment: any,
-    onPaymentRequired?: (info: X402PaymentInfo) => void
-  ): Promise<any> => {
-    try {
-      return await client.createLPCommitment(commitment);
-    } catch (error) {
-      if (client.isX402Error(error)) {
-        onPaymentRequired?.(error.paymentInfo);
-        
-        // Auto-execute payment if user confirms
-        // In practice, you'd show a confirmation dialog
-        const shouldPay = confirm(`Payment required: ${error.paymentInfo.cost}. Pay now?`);
-        
-        if (shouldPay) {
-          const costAmount = error.paymentInfo.cost.split(' ')[0]; // Extract amount
-          const paymentProof = await executePayment(costAmount, error.paymentInfo.recipient);
-          
-          // Retry with payment proof
-          return await client.request('/commitments/lp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(commitment),
-          }, paymentProof);
-        }
-      }
-      throw error;
-    }
-  };
-
-  /**
-   * Take commitment with automatic payment handling
-   */
-  const takeCommitmentWithPayment = async (
-    commitmentId: string,
-    data: any,
-    onPaymentRequired?: (info: X402PaymentInfo) => void
-  ): Promise<any> => {
-    try {
-      return await client.takeCommitment(commitmentId, data);
-    } catch (error) {
-      if (client.isX402Error(error)) {
-        onPaymentRequired?.(error.paymentInfo);
-        
-        const shouldPay = confirm(`Payment required: ${error.paymentInfo.cost}. Pay now?`);
-        
-        if (shouldPay) {
-          const costAmount = error.paymentInfo.cost.split(' ')[0];
-          const paymentProof = await executePayment(costAmount, error.paymentInfo.recipient);
-          
-          return await client.request(`/commitments/${commitmentId}/take`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-          }, paymentProof);
-        }
-      }
-      throw error;
-    }
+    return client.createCommitment(commitment);
   };
 
   return {
     client,
-    createLPCommitmentWithPayment,
-    takeCommitmentWithPayment,
-    getMarketplaceLiquidity: client.getMarketplaceLiquidity.bind(client),
+    createCommitmentWithPayment,
+    getCommitments: client.getCommitments.bind(client),
+    PaymentRequiredError,
   };
 }
-
-// Export singleton client
-export const x402Client = new X402Client();

@@ -1,323 +1,272 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { SignedLPCommitment, SignedOptionCommitment, CommitmentType } from '@/lib/eip712/verification';
+import { createCommitmentStorage } from '@/lib/database/commitment-storage';
+import { createPostgreSQLStorage } from '@/lib/database/postgresql-storage';
+import { createCommitmentValidator } from '@/lib/database/commitment-validation';
 
-// Initialize Supabase client (for now using mock, would use actual DB in production)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://mock.supabase.co';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'mock-key';
-
-interface Commitment {
-  id: string;
-  lp_address?: string; // For LP commitments
-  taker_address?: string; // For taker commitments
-  asset_address: string;
-  amount: number;
-  target_price: number; // 0 for taker commitments
-  premium: number; // 0 for LP commitments, USDC amount for taker commitments
-  duration_days: number;
-  option_type: number; // 0=CALL, 1=PUT
-  signature: string;
-  created_at: string;
-  taken_at?: string;
-  nonce: number;
-  expiry: number;
+// API Protection - Frontend Only Access
+function isInternalRequest(request: NextRequest): boolean {
+  const userAgent = request.headers.get('user-agent') || '';
+  const origin = request.headers.get('origin');
+  
+  // Block common API tools
+  const apiTools = ['curl', 'wget', 'postman', 'insomnia', 'httpie', 'python-requests', 'axios', 'node-fetch'];
+  const lowerAgent = userAgent.toLowerCase();
+  const isApiTool = apiTools.some(tool => lowerAgent.includes(tool));
+  
+  if (isApiTool) {
+    return false;
+  }
+  
+  // Allow browser requests
+  return true;
 }
 
-interface CreateCommitmentRequest {
-  lpAddress?: string; // For LP commitments
-  takerAddress?: string; // For taker commitments
-  assetAddress: string;
-  amount: number;
-  targetPrice?: number; // Required for LP, not used for taker
-  premium?: number; // Required for taker, not used for LP
-  durationDays: number;
-  optionType: number; // 0=CALL, 1=PUT
-  signature: string;
-  nonce: number;
-  expiry: number;
+function createSecurityResponse(): NextResponse {
+  return NextResponse.json({
+    error: 'Access Denied',
+    message: 'Automated tool detected. Use /api/x402/commitments for programmatic access',
+    code: 'SECURITY_VIOLATION',
+    alternativeEndpoint: '/api/x402/commitments',
+    paymentRequired: 'Use /api/x402/commitments for external API access',
+  }, { status: 403 });
 }
 
-// GET /api/commitments - Fetch available commitments
+// Initialize storage and validator
+const storage = process.env.DATABASE_URL 
+  ? createPostgreSQLStorage(process.env.DATABASE_URL)
+  : createCommitmentStorage('memory');
+const validator = createCommitmentValidator(
+  process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+  process.env.NEXT_PUBLIC_DURATION_OPTIONS_ADDRESS as `0x${string}` || '0x0'
+);
+
+/**
+ * GET /api/commitments - Get all active commitments or commitments by LP
+ * SECURITY: Frontend only access - blocks API tools
+ * External API users should use /api/x402/commitments
+ */
 export async function GET(request: NextRequest) {
+  // Security check
+  if (!isInternalRequest(request)) {
+    return createSecurityResponse();
+  }
+  
   try {
     const { searchParams } = new URL(request.url);
-    const asset = searchParams.get('asset');
-    const minAmount = searchParams.get('minAmount');
-    const maxAmount = searchParams.get('maxAmount');
-    const minDuration = searchParams.get('minDuration');
-    const maxDuration = searchParams.get('maxDuration');
+    const creatorAddress = searchParams.get('creator');
+    const commitmentType = searchParams.get('type'); // 'offer' or 'demand'
+    const lpAddress = searchParams.get('lp'); // Legacy support
 
-    // Mock data for development (mix of LP and Taker commitments)
-    const mockCommitments: Commitment[] = [
-      // LP Commitment
+    let commitments: any[];
+
+    if (creatorAddress) {
+      // Get commitments for specific creator (fallback to LP method)
+      commitments = await storage.getByLP(creatorAddress);
+    } else if (lpAddress) {
+      // Legacy support - get commitments by LP
+      commitments = await storage.getByLP(lpAddress);
+    } else {
+      // Get all active commitments
+      commitments = await storage.getAllActive();
+    }
+
+    // Convert BigInt values to strings for JSON serialization
+    const serializedCommitments = commitments.map((commitment: any) => ({
+      ...commitment,
+      id: commitment.id, // Include database ID for frontend operations
+      amount: commitment.amount.toString(),
+      dailyPremiumUsdc: commitment.dailyPremiumUsdc.toString(),
+      minLockDays: commitment.minLockDays.toString(),
+      maxDurationDays: commitment.maxDurationDays.toString(),
+      expiry: commitment.expiry.toString(),
+      nonce: commitment.nonce.toString(),
+    }));
+
+    return NextResponse.json(
       {
-        id: '1',
-        lp_address: '0x1234567890123456789012345678901234567890',
-        asset_address: '0x4200000000000000000000000000000000000006', // WETH
-        amount: 1.5,
-        target_price: 4200,
-        premium: 0, // LP doesn't set premium
-        duration_days: 2,
-        option_type: 0, // CALL
-        signature: '0xsignature1',
-        created_at: new Date().toISOString(),
-        nonce: 1,
-        expiry: Date.now() + 3600000, // 1 hour from now
+        success: true,
+        commitments: serializedCommitments,
+        count: serializedCommitments.length,
+        internal: true, // Indicate this is internal API access
       },
-      // Taker Commitment
       {
-        id: '2',
-        taker_address: '0x2345678901234567890123456789012345678901',
-        asset_address: '0x4200000000000000000000000000000000000006', // WETH
-        amount: 0.8,
-        target_price: 0, // Taker doesn't set target price
-        premium: 150, // Taker willing to pay 150 USDC premium
-        duration_days: 1,
-        option_type: 1, // PUT
-        signature: '0xsignature2',
-        created_at: new Date().toISOString(),
-        nonce: 1,
-        expiry: Date.now() + 7200000, // 2 hours from now
-      },
-      // LP Commitment
-      {
-        id: '3',
-        lp_address: '0x3456789012345678901234567890123456789012',
-        asset_address: '0x4200000000000000000000000000000000000006', // WETH
-        amount: 2.0,
-        target_price: 4500,
-        premium: 0,
-        duration_days: 7,
-        option_type: 0, // CALL
-        signature: '0xsignature3',
-        created_at: new Date().toISOString(),
-        nonce: 1,
-        expiry: Date.now() + 1800000, // 30 minutes from now
-      },
-      // Taker Commitment
-      {
-        id: '4',
-        taker_address: '0x4567890123456789012345678901234567890123',
-        asset_address: '0x4200000000000000000000000000000000000006', // WETH
-        amount: 1.0,
-        target_price: 0,
-        premium: 300, // Taker willing to pay 300 USDC premium
-        duration_days: 3,
-        option_type: 0, // CALL
-        signature: '0xsignature4',
-        created_at: new Date().toISOString(),
-        nonce: 1,
-        expiry: Date.now() + 5400000, // 1.5 hours from now
-      },
-    ];
-
-    // Filter commitments based on query parameters
-    let filteredCommitments = mockCommitments.filter(c => c.expiry > Date.now());
-
-    if (asset) {
-      filteredCommitments = filteredCommitments.filter(c => 
-        c.asset_address.toLowerCase() === asset.toLowerCase()
-      );
-    }
-
-    if (minAmount) {
-      filteredCommitments = filteredCommitments.filter(c => c.amount >= parseFloat(minAmount));
-    }
-
-    if (maxAmount) {
-      filteredCommitments = filteredCommitments.filter(c => c.amount <= parseFloat(maxAmount));
-    }
-
-    if (minDuration) {
-      filteredCommitments = filteredCommitments.filter(c => c.duration_days >= parseInt(minDuration));
-    }
-
-    if (maxDuration) {
-      filteredCommitments = filteredCommitments.filter(c => c.duration_days <= parseInt(maxDuration));
-    }
-
-    // Fetch current prices for premium calculations
-    let currentPrices: Record<string, number> = {};
-    try {
-      const priceResponse = await fetch(`${process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'}/api/price`);
-      if (priceResponse.ok) {
-        const priceData = await priceResponse.json();
-        if (priceData.success && priceData.prices) {
-          Object.entries(priceData.prices).forEach(([asset, data]: [string, any]) => {
-            currentPrices[asset] = data.price;
-          });
-        }
+        headers: {
+          'X-Internal-API': 'true',
+          'X-External-Alternative': '/api/x402/commitments',
+        },
       }
-    } catch (err) {
-      console.warn('Failed to fetch current prices, using fallbacks:', err);
-    }
-
-    // Fallback prices if API call fails
-    const fallbackPrices: Record<string, number> = {
-      '0x4200000000000000000000000000000000000006': 3500, // WETH
-      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': 1,    // USDC
-    };
-
-    return NextResponse.json({
-      success: true,
-      commitments: filteredCommitments.map(c => {
-        const currentPrice = currentPrices[c.asset_address] || fallbackPrices[c.asset_address] || 3500;
-        const isLpCommitment = c.lp_address !== undefined;
-        
-        return {
-          ...c,
-          type: isLpCommitment ? 'LP' : 'TAKER',
-          currentPrice,
-          calculatedPremium: isLpCommitment 
-            ? Math.abs(currentPrice - c.target_price) * c.amount
-            : c.premium,
-          optionType: c.option_type === 0 ? 'CALL' : 'PUT',
-          creator: isLpCommitment ? c.lp_address : c.taker_address,
-        };
-      }),
-    });
+    );
   } catch (error) {
     console.error('Error fetching commitments:', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      },
       { status: 500 }
     );
   }
 }
 
-// POST /api/commitments - Create new commitment
+/**
+ * POST /api/commitments - Create new commitment (FRONTEND ONLY)
+ * SECURITY: Frontend only access - blocks API tools
+ * External API users must use /api/x402/commitments with payment
+ */
 export async function POST(request: NextRequest) {
+  // Security check
+  if (!isInternalRequest(request)) {
+    return createSecurityResponse();
+  }
+  
   try {
-    const body: CreateCommitmentRequest = await request.json();
+    const commitmentData = await request.json();
 
-    // Determine if this is LP or Taker commitment
-    const isLpCommitment = body.lpAddress !== undefined;
-    const isTakerCommitment = body.takerAddress !== undefined;
-    
-    // Must be either LP or Taker, but not both
-    if (!(isLpCommitment !== isTakerCommitment)) {
-      return NextResponse.json(
-        { success: false, error: 'Must specify either lpAddress or takerAddress, but not both' },
-        { status: 400 }
-      );
+    // Check if this is a unified commitment or legacy LP commitment
+    const isUnifiedCommitment = 'commitmentType' in commitmentData;
+
+    let commitmentId: string;
+
+    if (isUnifiedCommitment) {
+      // Handle unified commitment
+      const commitment: SignedOptionCommitment = {
+        creator: commitmentData.creator as `0x${string}`,
+        asset: commitmentData.asset as `0x${string}`,
+        amount: BigInt(commitmentData.amount),
+        premiumAmount: BigInt(commitmentData.premiumAmount),
+        minDurationDays: BigInt(commitmentData.minDurationDays),
+        maxDurationDays: BigInt(commitmentData.maxDurationDays),
+        optionType: commitmentData.optionType,
+        commitmentType: commitmentData.commitmentType,
+        expiry: BigInt(commitmentData.expiry),
+        nonce: BigInt(commitmentData.nonce),
+        isFramentable: commitmentData.isFramentable,
+        signature: commitmentData.signature as `0x${string}`,
+      };
+
+      // Convert to legacy format for backward compatibility
+      const legacyCommitment: SignedLPCommitment = {
+        lp: commitment.creator,
+        asset: commitment.asset,
+        amount: commitment.amount,
+        dailyPremiumUsdc: commitment.premiumAmount,
+        minLockDays: commitment.minDurationDays,
+        maxDurationDays: commitment.maxDurationDays,
+        optionType: commitment.optionType,
+        expiry: commitment.expiry,
+        nonce: commitment.nonce,
+        isFramentable: commitment.isFramentable,
+        signature: commitment.signature,
+      };
+      commitmentId = await storage.store(legacyCommitment);
+    } else {
+      // Handle legacy LP commitment
+      const commitment: SignedLPCommitment = {
+        lp: commitmentData.lp as `0x${string}`,
+        asset: commitmentData.asset as `0x${string}`,
+        amount: BigInt(commitmentData.amount),
+        dailyPremiumUsdc: BigInt(commitmentData.dailyPremiumUsdc),
+        minLockDays: BigInt(commitmentData.minLockDays),
+        maxDurationDays: BigInt(commitmentData.maxDurationDays),
+        optionType: commitmentData.optionType,
+        expiry: BigInt(commitmentData.expiry),
+        nonce: BigInt(commitmentData.nonce),
+        isFramentable: commitmentData.isFramentable,
+        signature: commitmentData.signature as `0x${string}`,
+      };
+
+      commitmentId = await storage.store(commitment);
     }
 
-    // Common validations
-    if (!body.assetAddress || !body.signature) {
-      return NextResponse.json(
-        { success: false, error: 'Missing required fields' },
-        { status: 400 }
-      );
-    }
-
-    if (body.amount < 0.1 || body.amount > 1000) {
-      return NextResponse.json(
-        { success: false, error: 'Amount must be between 0.1 and 1000' },
-        { status: 400 }
-      );
-    }
-
-    if (body.durationDays < 1 || body.durationDays > 365) {
-      return NextResponse.json(
-        { success: false, error: 'Duration must be between 1 and 365 days' },
-        { status: 400 }
-      );
-    }
-
-    // LP-specific validations
-    if (isLpCommitment) {
-      if (!body.targetPrice || body.targetPrice <= 0) {
-        return NextResponse.json(
-          { success: false, error: 'LP must specify target price' },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Taker-specific validations
-    if (isTakerCommitment) {
-      if (!body.premium || body.premium <= 0) {
-        return NextResponse.json(
-          { success: false, error: 'Taker must specify premium' },
-          { status: 400 }
-        );
-      }
-    }
-
-    // TODO: Verify signature using contract verification
-    // const isValidSignature = await verifyCommitmentSignature(body);
-    // if (!isValidSignature) {
-    //   return NextResponse.json(
-    //     { success: false, error: 'Invalid signature' },
-    //     { status: 400 }
-    //   );
-    // }
-
-    // Generate commitment ID
-    const commitmentId = `commitment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    // Store in database (mock for now)
-    const newCommitment: Commitment = {
-      id: commitmentId,
-      lp_address: body.lpAddress,
-      taker_address: body.takerAddress,
-      asset_address: body.assetAddress,
-      amount: body.amount,
-      target_price: body.targetPrice || 0,
-      premium: body.premium || 0,
-      duration_days: body.durationDays,
-      option_type: body.optionType,
-      signature: body.signature,
-      created_at: new Date().toISOString(),
-      nonce: body.nonce,
-      expiry: body.expiry,
-    };
-
-    // TODO: Store in actual database
-    // await supabase.from('lp_commitments').insert([newCommitment]);
-
-    console.log('Created commitment:', newCommitment);
-
-    return NextResponse.json({
-      success: true,
-      commitment: newCommitment,
-      commitmentHash: `0x${Buffer.from(JSON.stringify(newCommitment)).toString('hex').slice(0, 64)}`,
-    });
-  } catch (error) {
-    console.error('Error creating commitment:', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
+      {
+        success: true,
+        commitmentId,
+        message: 'Commitment stored successfully (internal access)',
+        internal: true,
+      },
+      {
+        headers: {
+          'X-Internal-API': 'true',
+          'X-External-Alternative': '/api/x402/commitments',
+        },
+      }
+    );
+  } catch (error) {
+    console.error('Error storing commitment:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 400 }
     );
   }
 }
 
-// DELETE /api/commitments/[id] - Cancel commitment
+/**
+ * DELETE /api/commitments/[id] - Cancel/recall existing commitment (FRONTEND ONLY)
+ */
 export async function DELETE(request: NextRequest) {
+  // Security check
+  if (!isInternalRequest(request)) {
+    return createSecurityResponse();
+  }
+  
   try {
-    const url = new URL(request.url);
-    const commitmentId = url.pathname.split('/').pop();
+    const { searchParams } = new URL(request.url);
+    const commitmentId = searchParams.get('id');
 
     if (!commitmentId) {
       return NextResponse.json(
-        { success: false, error: 'Missing commitment ID' },
+        {
+          success: false,
+          error: 'Commitment ID required',
+        },
         { status: 400 }
       );
     }
 
-    // TODO: Verify that the caller is the LP who created the commitment
-    // TODO: Check that commitment hasn't been taken yet
-    // TODO: Remove from database
+    // Get the commitment to verify ownership
+    const commitment = await storage.get(commitmentId);
+    if (!commitment) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Commitment not found',
+        },
+        { status: 404 }
+      );
+    }
 
-    console.log('Cancelled commitment:', commitmentId);
+    // TODO: Add authentication check to ensure only the LP can cancel their commitment
+    // For now, we'll trust the frontend to only show cancel buttons to the right user
 
-    return NextResponse.json({
-      success: true,
-      message: 'Commitment cancelled successfully',
-    });
+    // Remove the commitment
+    const removed = await storage.remove(commitmentId);
+
+    if (removed) {
+      return NextResponse.json({
+        success: true,
+        message: 'Commitment cancelled successfully',
+      });
+    } else {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Failed to remove commitment',
+        },
+        { status: 500 }
+      );
+    }
   } catch (error) {
     console.error('Error cancelling commitment:', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      },
       { status: 500 }
     );
   }

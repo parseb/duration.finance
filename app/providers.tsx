@@ -76,12 +76,29 @@ function useIsMiniApp() {
 export function Providers(props: { children: ReactNode }) {
   const isMiniApp = useIsMiniApp();
 
-  // Show loading during hydration
+  // Show loading during hydration - but still provide basic wagmi context
   if (isMiniApp === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
-      </div>
+      <WagmiProvider config={wagmiConfig}>
+        <QueryClientProvider client={queryClient}>
+          <OnchainKitProvider
+            apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}
+            chain={base}
+            config={{
+              appearance: {
+                mode: "auto",
+                theme: "base",
+                name: process.env.NEXT_PUBLIC_ONCHAINKIT_PROJECT_NAME,
+                logo: process.env.NEXT_PUBLIC_ICON_URL,
+              },
+            }}
+          >
+            <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center">
+              <div className="text-white">Loading...</div>
+            </div>
+          </OnchainKitProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
     );
   }
 

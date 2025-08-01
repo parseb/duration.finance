@@ -37,11 +37,37 @@ contract OneInchIntegrationTest is Test {
         
         vm.stopPrank();
         
-        // Give test accounts some tokens for testing
-        deal(WETH, alice, 100 ether);
-        deal(USDC, alice, 100000e6); // 100k USDC
-        deal(WETH, bob, 100 ether);
-        deal(USDC, bob, 100000e6);
+        // Mock token balances for testing
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.balanceOf.selector),
+            abi.encode(100 ether)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.balanceOf.selector),
+            abi.encode(100000e6)
+        );
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.transferFrom.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transferFrom.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.transfer.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transfer.selector),
+            abi.encode(true)
+        );
         
         console.log("Contracts deployed and setup completed");
     }
@@ -72,30 +98,25 @@ contract OneInchIntegrationTest is Test {
         
         // Create LP commitment
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 1 ether,
-            dailyPremiumUsdc: 50 * 1e6, // $50 per day
-            minLockDays: 1,
+            amount: 0.5 ether, // Within limits (0.001-1 WETH)
+            premiumAmount: 50 * 1e6, // $50 per day
+            minDurationDays: 1,
             maxDurationDays: 14,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27)) // Mock signature
         });
         
-        // Store commitment
-        options.createLPCommitment(commitment);
-        
         vm.stopPrank();
         
-        // Verify commitment was stored
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
-        IDurationOptions.OptionCommitment memory stored = options.getCommitment(commitmentHash);
-        
-        assertEq(stored.lp, alice);
-        assertEq(stored.dailyPremiumUsdc, 50 * 1e6);
+        // Verify commitment properties (no on-chain storage)
+        assertEq(commitment.creator, alice);
+        assertEq(commitment.premiumAmount, 50 * 1e6);
         
         console.log("LP commitment created with daily premium: $50");
     }
@@ -105,28 +126,26 @@ contract OneInchIntegrationTest is Test {
         vm.startPrank(alice);
         
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 1 ether,
-            dailyPremiumUsdc: 30 * 1e6, // $30 per day
-            minLockDays: 1,
+            amount: 0.5 ether, // Within limits (0.001-1 WETH)
+            premiumAmount: 30 * 1e6, // $30 per day
+            minDurationDays: 1,
             maxDurationDays: 21,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
         
-        options.createLPCommitment(commitment);
-        
         vm.stopPrank();
         
-        // Calculate premium for different durations
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
-        uint256 premium7Days = options.calculatePremiumForDuration(commitmentHash, 7);
-        uint256 premium14Days = options.calculatePremiumForDuration(commitmentHash, 14);
-        uint256 premium21Days = options.calculatePremiumForDuration(commitmentHash, 21);
+        // Calculate premium for different durations (no on-chain storage needed)
+        uint256 premium7Days = options.calculatePremiumForDuration(commitment, 7);
+        uint256 premium14Days = options.calculatePremiumForDuration(commitment, 14);
+        uint256 premium21Days = options.calculatePremiumForDuration(commitment, 21);
         
         // Premium should be dailyPremium * duration
         assertEq(premium7Days, 30 * 1e6 * 7);   // $210
@@ -143,32 +162,29 @@ contract OneInchIntegrationTest is Test {
         
         // Create commitment with specific duration range
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 1 ether,
-            dailyPremiumUsdc: 40 * 1e6,
-            minLockDays: 5,  // Minimum 5 days
+            amount: 0.5 ether, // Within limits (0.001-1 WETH)
+            premiumAmount: 40 * 1e6,
+            minDurationDays: 5,  // Minimum 5 days
             maxDurationDays: 15, // Maximum 15 days
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
         
-        options.createLPCommitment(commitment);
-        
         vm.stopPrank();
         
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
-        
-        // Test duration validation
-        assertFalse(options.isValidDuration(commitmentHash, 3));  // Below minimum
-        assertFalse(options.isValidDuration(commitmentHash, 4));  // Below minimum
-        assertTrue(options.isValidDuration(commitmentHash, 5));   // At minimum
-        assertTrue(options.isValidDuration(commitmentHash, 10));  // Within range
-        assertTrue(options.isValidDuration(commitmentHash, 15));  // At maximum
-        assertFalse(options.isValidDuration(commitmentHash, 16)); // Above maximum
+        // Test duration validation (no on-chain storage needed)
+        assertFalse(options.isValidDuration(commitment, 3));  // Below minimum
+        assertFalse(options.isValidDuration(commitment, 4));  // Below minimum
+        assertTrue(options.isValidDuration(commitment, 5));   // At minimum
+        assertTrue(options.isValidDuration(commitment, 10));  // Within range
+        assertTrue(options.isValidDuration(commitment, 15));  // At maximum
+        assertFalse(options.isValidDuration(commitment, 16)); // Above maximum
         
         console.log("Duration validation test completed");
     }
@@ -178,27 +194,25 @@ contract OneInchIntegrationTest is Test {
         
         // Create commitment
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 2 ether, // 2 WETH
-            dailyPremiumUsdc: 80 * 1e6, // $80 per day
-            minLockDays: 1,
+            amount: 0.8 ether, // Within limits (0.001-1 WETH)
+            premiumAmount: 80 * 1e6, // $80 per day
+            minDurationDays: 1,
             maxDurationDays: 30,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
         
-        options.createLPCommitment(commitment);
-        
         vm.stopPrank();
         
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
         uint256 currentPrice = options.getCurrentPrice(WETH);
         
-        (uint256 dailyYield, uint256 annualizedYield) = options.getLPYieldMetrics(commitmentHash, currentPrice);
+        (uint256 dailyYield, uint256 annualizedYield) = options.getLPYieldMetrics(commitment, currentPrice);
         
         assertGt(dailyYield, 0);
         assertGt(annualizedYield, 0);

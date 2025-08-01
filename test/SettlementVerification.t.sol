@@ -72,25 +72,21 @@ contract SettlementVerificationTest is Test {
     function testCollateralizationCheck() public {
         // Create LP commitment
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 2 ether, // 2 WETH collateral
-            dailyPremiumUsdc: 60 * 1e6, // $60 per day
-            minLockDays: 1,
+            amount: 0.8 ether, // Within limits (0.001-1 WETH)
+            premiumAmount: 60 * 1e6, // $60 per day
+            minDurationDays: 1,
             maxDurationDays: 10,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: false,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
 
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
-
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
-        
-        // Take the option
+        // Take the option directly (no on-chain storage needed)
         IDurationOptions.SettlementParams memory params = IDurationOptions.SettlementParams({
             method: 1, // Unoswap
             routingData: "",
@@ -99,15 +95,15 @@ contract SettlementVerificationTest is Test {
         });
 
         vm.prank(bob);
-        uint256 optionId = options.takeCommitment(commitmentHash, 7, params);
+        uint256 optionId = options.takeCommitment(commitment, 7, params);
 
         // Verify collateral is locked
         uint256 totalLocked = options.totalLocked(WETH);
-        assertEq(totalLocked, 2 ether);
+        assertEq(totalLocked, 0.8 ether);
         
         // Verify option details
         IDurationOptions.ActiveOption memory option = options.getOption(optionId);
-        assertEq(option.amount, 2 ether);
+        assertEq(option.amount, 0.8 ether);
         assertEq(option.lp, alice);
         assertEq(option.taker, bob);
         
@@ -146,26 +142,64 @@ contract SettlementVerificationTest is Test {
     function testNonceManagement() public {
         uint256 initialNonce = options.getNonce(alice);
         
-        // Create commitment (should increment nonce)
+        // Create commitment for nonce test
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 1 ether,
-            dailyPremiumUsdc: 40 * 1e6,
-            minLockDays: 1,
+            amount: 0.6 ether, // Within limits (0.001-1 WETH)
+            premiumAmount: 40 * 1e6,
+            minDurationDays: 1,
             maxDurationDays: 5,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
-            nonce: initialNonce + 1,
+            nonce: initialNonce,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
 
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
+        // Mock LP balance and allowance checks
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.balanceOf.selector, alice),
+            abi.encode(10 ether)
+        );
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.allowance.selector, alice, address(options)),
+            abi.encode(10 ether)
+        );
+
+        // Mock transfers
+        vm.mockCall(
+            WETH,
+            abi.encodeWithSelector(IERC20.transferFrom.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transferFrom.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            USDC,
+            abi.encodeWithSelector(IERC20.transfer.selector),
+            abi.encode(true)
+        );
+
+        // Take commitment (this increments nonce)
+        IDurationOptions.SettlementParams memory params = IDurationOptions.SettlementParams({
+            method: 1,
+            routingData: "",
+            minReturn: 0,
+            deadline: block.timestamp + 1 hours
+        });
+
+        vm.prank(bob);
+        options.takeCommitment(commitment, 3, params);
 
         uint256 newNonce = options.getNonce(alice);
-        assertEq(newNonce, initialNonce + 2); // Should increment by 1
+        assertEq(newNonce, initialNonce + 1); // Should increment by 1
         
         console.log("Nonce management test completed");
     }

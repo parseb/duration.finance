@@ -23,7 +23,10 @@ import {
   WalletDropdownDisconnect,
 } from '@coinbase/onchainkit/wallet';
 import { WalletConnection } from './components/WalletConnection';
-import { LPCommitmentForm } from './components/LPCommitmentForm';
+import { MakeCommitmentForm } from './components/MakeCommitmentForm';
+import { CommitmentList } from './components/CommitmentList';
+import { TakeCommitmentButton } from './components/TakeCommitmentButton';
+import { ExerciseOptionButton } from './components/ExerciseOptionButton';
 
 // Helper to detect if we're in a Farcaster mini app environment
 function useIsMiniApp() {
@@ -97,7 +100,7 @@ export default function Page() {
   const { isMiniApp, miniKit, addFrame, openUrl, close, viewProfile, sendNotification } = useMiniKitConditional();
   const { setFrameReady, isFrameReady, context } = miniKit;
   
-  const [activeTab, setActiveTab] = useState<'provide' | 'take' | 'portfolio'>('provide');
+  const [activeTab, setActiveTab] = useState<'make' | 'take' | 'portfolio'>('make');
 
   useEffect(() => {
     if (!isFrameReady) {
@@ -117,10 +120,7 @@ export default function Page() {
       {/* Header */}
       <header className="flex justify-between items-center p-4 border-b border-blue-600">
         <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center">
-            <span className="text-blue-900 font-bold text-sm">D</span>
-          </div>
-          <h1 className="text-xl font-bold">Duration.Finance</h1>
+          <h1 className="text-xl font-bold">| duration |</h1>
         </div>
         
         <div className="flex items-center space-x-2">
@@ -158,55 +158,94 @@ export default function Page() {
 
       {/* Tab Navigation */}
       <div className="flex border-b border-blue-600">
-        {(['provide', 'take', 'portfolio'] as const).map((tab) => (
+        {([{key: 'make', label: 'Make'}, {key: 'take', label: 'Take'}, {key: 'portfolio', label: 'Portfolio'}] as const).map((tab) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-3 px-4 text-center capitalize font-medium transition-colors ${
-              activeTab === tab 
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key as any)}
+            className={`flex-1 py-3 px-4 text-center font-medium transition-colors ${
+              activeTab === tab.key 
                 ? 'bg-blue-600 text-white border-b-2 border-yellow-500' 
                 : 'bg-blue-800 text-blue-200 hover:bg-blue-700'
             }`}
           >
-            {tab}
+            {tab.label}
           </button>
         ))}
       </div>
 
       {/* Main Content */}
       <main className="p-4 pb-20">
-        {activeTab === 'provide' && <ProvideTab />}
+        {activeTab === 'make' && <MakeTab />}
         {activeTab === 'take' && <TakeTab />}
         {activeTab === 'portfolio' && <PortfolioTab />}
       </main>
 
       {/* Footer */}
-      <footer className="fixed bottom-0 left-0 right-0 flex items-center justify-center p-4 bg-blue-900">
-        <button
-          type="button"
-          className="px-4 py-2 rounded-2xl font-semibold opacity-60 border border-blue-400 text-xs"
-          onClick={() => openUrl(isMiniApp === true ? 'https://base.org/builders/minikit' : 'https://duration.finance')}
-        >
-          {isMiniApp === true ? 'BUILT ON BASE WITH MINIKIT' : 'DURATION.FINANCE - POWERED BY BASE'}
-        </button>
+      <footer className="border-t border-blue-600 bg-blue-900 p-4">
+        <div className="flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0">
+          <div className="text-sm text-blue-300">
+            2025 Duration.Finance - A first of its kind duration marketplace
+          </div>
+          <div className="flex space-x-6 text-sm">
+            <button
+              onClick={() => openUrl('https://docs.duration.finance')}
+              className="text-blue-300 hover:text-white transition-colors"
+            >
+              Docs
+            </button>
+            <button
+              onClick={() => openUrl('https://duration.finance/about')}
+              className="text-blue-300 hover:text-white transition-colors"
+            >
+              About
+            </button>
+            <button
+              onClick={() => openUrl('https://signal.group/#CjQKIAcAdm-Fk5pvY_G5fSUKjEt8rqHZcAN3AR7l_3GXOKx0EhDALqPtmCN5Nf83lcxTrsnT')}
+              className="text-blue-300 hover:text-white transition-colors"
+            >
+              Signal
+            </button>
+            <button
+              onClick={() => openUrl('mailto:contact@duration.finance')}
+              className="text-blue-300 hover:text-white transition-colors"
+            >
+              Contact
+            </button>
+          </div>
+        </div>
       </footer>
+
     </div>
   );
 }
 
-function ProvideTab() {
+function MakeTab() {
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
   return (
     <div className="space-y-6">
-      <LPCommitmentForm 
-        onSuccess={(commitmentHash) => {
-          console.log('LP Commitment created:', commitmentHash);
-          // TODO: Show success message and refresh marketplace
+      <MakeCommitmentForm 
+        onSuccess={(commitmentId) => {
+          console.log('Commitment created:', commitmentId);
+          setRefreshTrigger(prev => prev + 1); // Trigger refresh of commitment list
         }}
         onError={(error) => {
-          console.error('LP Commitment failed:', error);
+          console.error('Commitment failed:', error);
           // TODO: Show error message to user
         }}
       />
+      
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <CommitmentList 
+          key={`my-${refreshTrigger}`}
+          showOnlyMyCommitments={true}
+          onCancel={() => setRefreshTrigger(prev => prev + 1)}
+        />
+        <CommitmentList 
+          key={`all-${refreshTrigger}`}
+          showOnlyMyCommitments={false}
+        />
+      </div>
     </div>
   );
 }
@@ -455,55 +494,20 @@ function TakeTab() {
         </div>
         
         {/* Available Liquidity */}
-        <div className="space-y-3">
-          {sortedLiquidity.length > 0 ? (
-            sortedLiquidity.map((offer) => (
-              <div key={offer.id} className={`bg-blue-700 rounded-lg p-4 border ${
-                offer.canTake ? 'border-blue-600' : 'border-red-600 opacity-60'
-              }`}>
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <div className="text-white font-medium">{offer.amount} WETH</div>
-                    <div className="text-blue-200 text-sm">LP: {offer.lp}</div>
-                    <div className="text-green-400 text-xs">{offer.dailyYield.toFixed(2)}% daily yield</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-yellow-500 font-bold">${offer.totalCost.toFixed(0)}</div>
-                    <div className="text-blue-200 text-sm">Total Premium</div>
-                    <div className="text-blue-300 text-xs">${offer.dailyPremium}/day</div>
-                  </div>
-                </div>
-                
-                <div className="flex justify-between items-center text-sm text-blue-200 mb-3">
-                  <span>Range: {offer.minLock}-{offer.maxDuration} days</span>
-                  <span>Collateral: ${offer.collateralValue.toLocaleString()}</span>
-                  <span>Strike: Market @ Taking</span>
-                </div>
-                
-                {offer.canTake ? (
-                  <button className="w-full py-2 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors">
-                    Take {selectedDuration}-Day Option • ${offer.totalCost} USDC
-                  </button>
-                ) : (
-                  <div className="w-full py-2 bg-red-600/50 text-red-300 font-medium rounded-lg text-center">
-                    Duration not available (needs {offer.minLock}-{offer.maxDuration} days)
-                  </div>
-                )}
-              </div>
-            ))
-          ) : (
-            <div className="text-center py-8 text-blue-300">
-              <div className="text-lg mb-2">No liquidity matches your filters</div>
-              <div className="text-sm">Try adjusting the duration, cost, or yield ranges</div>
-            </div>
-          )}
-        </div>
+        {/* Show real commitments from database */}
+        <CommitmentList 
+          showOnlyMyCommitments={false}
+          commitmentType="OFFER"
+        />
       </div>
     </div>
   );
 }
 
 function PortfolioTab() {
+  // Mock current price - in real app this would come from 1inch API
+  const currentPrice = 3836.50;
+  
   return (
     <div className="space-y-6">
       <div className="bg-blue-800 rounded-lg p-6">
@@ -542,9 +546,29 @@ function PortfolioTab() {
                 <span>Premium Paid: 0.2 ETH</span>
               </div>
               
-              <button className="w-full py-2 bg-red-600 hover:bg-red-500 text-white font-medium rounded-lg transition-colors">
-                Exercise Option
-              </button>
+              <ExerciseOptionButton
+                option={{
+                  positionHash: `0x${i.toString().padStart(64, '0')}`,
+                  takerAddress: '0x742d35Cc6635C0532925a3b8D7AA25b1c7c7c7c7', // Mock taker
+                  lpAddress: '0x8ba1f109551bD432803012645Hac136c42Ed1234', // Mock LP
+                  assetAddress: '0x4200000000000000000000000000000000000006', // WETH
+                  amount: BigInt('1000000000000000000'), // 1 ETH
+                  strikePrice: BigInt('4000000000000000000000'), // $4000
+                  premiumPaidUsdc: BigInt('200000000'), // $200 USDC
+                  optionType: 0, // CALL
+                  expiryTimestamp: new Date(Date.now() + 86400000 * 1.2), // 1.2 days from now
+                  exerciseStatus: 'active',
+                }}
+                currentPrice={currentPrice}
+                onSuccess={(hash) => {
+                  console.log('Option exercised:', hash);
+                  alert('Option exercised successfully!');
+                }}
+                onError={(error) => {
+                  console.error('Exercise failed:', error);
+                  alert(`Failed to exercise: ${error}`);
+                }}
+              />
             </div>
           ))}
         </div>

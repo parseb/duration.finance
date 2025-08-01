@@ -78,7 +78,7 @@ contract OneInchSettlementRouter is ISettlementRouter, Ownable {
             amountIn: amountIn,
             amountOut: amountOut,
             protocolFee: 0,
-            gasUsed: 0 // Can be calculated if needed
+            gasUsed: 0 
         });
 
         emit SettlementExecuted(tokenIn, tokenOut, amountIn, amountOut, method);

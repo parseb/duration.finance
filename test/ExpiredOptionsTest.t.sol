@@ -69,25 +69,21 @@ contract ExpiredOptionsTest is Test {
     function testCreateLPCommitmentAndExpire() public {
         // Create LP commitment
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 1 ether,
-            dailyPremiumUsdc: 50 * 1e6, // $50 per day
-            minLockDays: 1,
+            amount: 0.5 ether, // Within new limits (0.001-1 WETH)
+            premiumAmount: 50 * 1e6, // $50 per day
+            minDurationDays: 1,
             maxDurationDays: 7,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27)) // Mock signature
         });
 
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
-
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
-        
-        // Take the commitment
+        // Take the commitment directly (no on-chain storage needed)
         IDurationOptions.SettlementParams memory params = IDurationOptions.SettlementParams({
             method: 1, // Unoswap
             routingData: "",
@@ -96,7 +92,7 @@ contract ExpiredOptionsTest is Test {
         });
 
         vm.prank(bob);
-        uint256 optionId = options.takeCommitment(commitmentHash, 7, params);
+        uint256 optionId = options.takeCommitment(commitment, 7, params);
 
         // Wait for expiration
         vm.warp(block.timestamp + 8 days);
@@ -115,28 +111,24 @@ contract ExpiredOptionsTest is Test {
     function testCalculatePremiumForDuration() public {
         // Create LP commitment
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 1 ether,
-            dailyPremiumUsdc: 30 * 1e6, // $30 per day
-            minLockDays: 1,
+            amount: 0.8 ether, // Within new limits (0.001-1 WETH)
+            premiumAmount: 30 * 1e6, // $30 per day
+            minDurationDays: 1,
             maxDurationDays: 14,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
 
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
-
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
-        
-        // Test premium calculation for different durations
-        uint256 premium1Day = options.calculatePremiumForDuration(commitmentHash, 1);
-        uint256 premium7Days = options.calculatePremiumForDuration(commitmentHash, 7);
-        uint256 premium14Days = options.calculatePremiumForDuration(commitmentHash, 14);
+        // Test premium calculation for different durations (no on-chain storage needed)
+        uint256 premium1Day = options.calculatePremiumForDuration(commitment, 1);
+        uint256 premium7Days = options.calculatePremiumForDuration(commitment, 7);
+        uint256 premium14Days = options.calculatePremiumForDuration(commitment, 14);
 
         assertEq(premium1Day, 30 * 1e6); // $30
         assertEq(premium7Days, 210 * 1e6); // $210
@@ -148,31 +140,27 @@ contract ExpiredOptionsTest is Test {
     function testIsValidDuration() public {
         // Create LP commitment with specific duration range
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 1 ether,
-            dailyPremiumUsdc: 40 * 1e6,
-            minLockDays: 3, // Minimum 3 days
+            amount: 0.7 ether, // Within new limits (0.001-1 WETH)
+            premiumAmount: 40 * 1e6,
+            minDurationDays: 3, // Minimum 3 days
             maxDurationDays: 10, // Maximum 10 days
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
 
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
-
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
-        
-        // Test duration validation
-        assertFalse(options.isValidDuration(commitmentHash, 1)); // Below minimum
-        assertFalse(options.isValidDuration(commitmentHash, 2)); // Below minimum
-        assertTrue(options.isValidDuration(commitmentHash, 3)); // At minimum
-        assertTrue(options.isValidDuration(commitmentHash, 7)); // Within range
-        assertTrue(options.isValidDuration(commitmentHash, 10)); // At maximum
-        assertFalse(options.isValidDuration(commitmentHash, 11)); // Above maximum
+        // Test duration validation (no on-chain storage needed)
+        assertFalse(options.isValidDuration(commitment, 1)); // Below minimum
+        assertFalse(options.isValidDuration(commitment, 2)); // Below minimum
+        assertTrue(options.isValidDuration(commitment, 3)); // At minimum
+        assertTrue(options.isValidDuration(commitment, 7)); // Within range
+        assertTrue(options.isValidDuration(commitment, 10)); // At maximum
+        assertFalse(options.isValidDuration(commitment, 11)); // Above maximum
 
         console.log("Duration validation test completed");
     }
@@ -180,26 +168,23 @@ contract ExpiredOptionsTest is Test {
     function testGetLPYieldMetrics() public {
         // Create LP commitment
         IDurationOptions.OptionCommitment memory commitment = IDurationOptions.OptionCommitment({
-            lp: alice,
+            creator: alice,
             asset: WETH,
-            amount: 2 ether, // 2 WETH
-            dailyPremiumUsdc: 100 * 1e6, // $100 per day
-            minLockDays: 1,
+            amount: 0.9 ether, // Within new limits (0.001-1 WETH)
+            premiumAmount: 100 * 1e6, // $100 per day
+            minDurationDays: 1,
             maxDurationDays: 30,
             optionType: IDurationOptions.OptionType.CALL,
+            commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
             isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
 
-        vm.prank(alice);
-        options.createLPCommitment(commitment);
-
-        bytes32 commitmentHash = keccak256(abi.encode(commitment));
         uint256 currentPrice = options.getCurrentPrice(WETH); // Mock price
         
-        (uint256 dailyYield, uint256 annualizedYield) = options.getLPYieldMetrics(commitmentHash, currentPrice);
+        (uint256 dailyYield, uint256 annualizedYield) = options.getLPYieldMetrics(commitment, currentPrice);
 
         assertGt(dailyYield, 0);
         assertGt(annualizedYield, 0);

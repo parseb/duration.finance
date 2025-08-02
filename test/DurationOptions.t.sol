@@ -241,7 +241,6 @@ contract DurationOptionsTest is Test {
             commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            isFramentable: true,
             signature: _createValidSignature()
         });
     }

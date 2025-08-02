@@ -108,7 +108,6 @@ contract OneInchIntegrationTest is Test {
             commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27)) // Mock signature
         });
         
@@ -136,7 +135,6 @@ contract OneInchIntegrationTest is Test {
             commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
         
@@ -172,7 +170,6 @@ contract OneInchIntegrationTest is Test {
             commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
         
@@ -204,7 +201,6 @@ contract OneInchIntegrationTest is Test {
             commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
         

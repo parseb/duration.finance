@@ -10,6 +10,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {IDurationOptions} from "./interfaces/IDurationOptions.sol";
+import {ISettlementRouter} from "./interfaces/I1inch.sol";
 
 /**
  * @title DurationOptions
@@ -23,12 +24,12 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
 
     // EIP712 type hash for unified commitments
     bytes32 public constant OPTION_COMMITMENT_TYPEHASH = keccak256(
-        "OptionCommitment(address creator,address asset,uint256 amount,uint256 premiumAmount,uint256 minDurationDays,uint256 maxDurationDays,uint8 optionType,uint8 commitmentType,uint256 expiry,uint256 nonce,bool isFramentable)"
+        "OptionCommitment(address creator,address asset,uint256 amount,uint256 premiumAmount,uint256 minDurationDays,uint256 maxDurationDays,uint8 optionType,uint8 commitmentType,uint256 expiry,uint256 nonce)"
     );
     
     // Legacy LP commitment type hash for backward compatibility
     bytes32 public constant LP_COMMITMENT_TYPEHASH = keccak256(
-        "LPCommitment(address lp,address asset,uint256 amount,uint256 dailyPremiumUsdc,uint256 minLockDays,uint256 maxDurationDays,uint8 optionType,uint256 expiry,uint256 nonce,bool isFramentable)"
+        "LPCommitment(address lp,address asset,uint256 amount,uint256 dailyPremiumUsdc,uint256 minLockDays,uint256 maxDurationDays,uint8 optionType,uint256 expiry,uint256 nonce)"
     );
 
     // Configurable position limits (can be updated by owner)
@@ -100,8 +101,7 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
             uint8(commitment.optionType),
             uint8(commitment.commitmentType),
             commitment.expiry,
-            commitment.nonce,
-            commitment.isFramentable
+            commitment.nonce
         ));
 
         bytes32 hash = _hashTypedDataV4(structHash);
@@ -135,8 +135,7 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
             commitment.maxDurationDays,
             uint8(commitment.optionType),
             commitment.expiry,
-            commitment.nonce,
-            commitment.isFramentable
+            commitment.nonce
         ));
 
         bytes32 hash = _hashTypedDataV4(structHash);
@@ -410,12 +409,95 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         SettlementParams calldata params,
         uint256 expectedReturn
     ) internal {
-        // 1inch settlement implementation
+        // Get settlement quote from the router
+        ISettlementRouter router = ISettlementRouter(settlementRouter);
+        
+        // Determine settlement direction based on option type and profitability
+        address tokenIn;
+        address tokenOut;
+        uint256 amountIn;
+        
+        if (option.optionType == OptionType.CALL) {
+            // For profitable CALL: Sell underlying asset to get USDC for taker
+            tokenIn = option.asset;
+            tokenOut = USDC;
+            amountIn = option.amount;
+        } else {
+            // For profitable PUT: Buy underlying asset with USDC for taker
+            tokenIn = USDC;
+            tokenOut = option.asset;
+            // Calculate USDC needed to buy the asset amount
+            uint256 currentPrice = getCurrentPrice(option.asset);
+            amountIn = (option.amount * currentPrice) / 1e18;
+        }
+        
+        // Get quote from 1inch via our settlement router
+        (uint256 quoteAmountOut, ISettlementRouter.SettlementMethod method, bytes memory routingData) = 
+            router.getSettlementQuote(tokenIn, tokenOut, amountIn);
+        
+        // Apply safety margin to protect against slippage
+        uint256 minAmountOut = (quoteAmountOut * (10000 - safetyMargin)) / 10000;
+        
+        // Verify we have enough tokens for the swap
+        require(IERC20(tokenIn).balanceOf(address(this)) >= amountIn, "Insufficient balance");
+        
+        // Approve settlement router to spend our tokens
+        IERC20(tokenIn).forceApprove(settlementRouter, amountIn);
+        
+        // Execute settlement through 1inch
+        ISettlementRouter.SettlementResult memory result = router.executeSettlement(
+            method,
+            tokenIn,
+            tokenOut,
+            amountIn,
+            minAmountOut,
+            routingData
+        );
+        
+        // Distribute proceeds
+        _distributeSettlementProceeds(option, tokenOut, result.amountOut, expectedReturn);
+    }
+    
+    function _distributeSettlementProceeds(
+        ActiveOption memory option,
+        address tokenOut,
+        uint256 totalAmountOut,
+        uint256 expectedTakerReturn
+    ) internal {
+        // Calculate protocol fee on the settlement profit
+        uint256 settlementProfit = totalAmountOut > expectedTakerReturn ? 
+            totalAmountOut - expectedTakerReturn : 0;
+        uint256 protocolFeeAmount = (settlementProfit * protocolFee) / 10000;
+        
+        // Transfer expected return to taker
+        if (expectedTakerReturn > 0) {
+            IERC20(tokenOut).safeTransfer(option.taker, expectedTakerReturn);
+        }
+        
+        // Calculate LP's share (remaining amount after taker gets their profit)
+        uint256 lpShare = totalAmountOut - expectedTakerReturn - protocolFeeAmount;
+        if (lpShare > 0) {
+            IERC20(tokenOut).safeTransfer(option.lp, lpShare); 
+        }
+        
+        // Protocol fees stay in contract - will be swept by owner later
+        // No immediate transfer needed as sweepProtocolFees() handles this
     }
 
     // View functions
     function getCurrentPrice(address asset) public view override returns (uint256) {
-        // Mock price - integrate with 1inch pricing in production
+        // Get current market price from settlement router
+        if (settlementRouter != address(0)) {
+            try ISettlementRouter(settlementRouter).getSettlementQuote(asset, USDC, 1e18) 
+                returns (uint256 usdcAmount, ISettlementRouter.SettlementMethod, bytes memory) {
+                // Convert USDC (6 decimals) to standard 18 decimal price format
+                return usdcAmount * 1e12;
+            } catch {
+                // Fallback to mock price if 1inch call fails
+            }
+        }
+        
+        // Fallback mock prices for testing/development
         if (asset == WETH) {
             return 3836.50 * 1e18;
         }

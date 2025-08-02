@@ -113,7 +113,6 @@ export function CommitmentList({
       commitmentType: commitment.commitmentType || 0, // Default to LP_OFFER
       expiry: safeToString(commitment.expiry),
       nonce: safeToString(commitment.nonce),
-      isFramentable: commitment.isFramentable,
     });
     return Buffer.from(data).toString('base64');
   };
@@ -269,37 +268,32 @@ export function CommitmentList({
           return (
             <div 
               key={commitmentId}
-              className={`border rounded-lg p-4 ${
+              className={`border rounded-2xl p-6 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02] ${
                 expired 
-                  ? 'border-red-500 bg-red-600/10' 
-                  : 'border-blue-600 bg-blue-700'
+                  ? 'border-red-500/50 bg-gradient-to-br from-red-600/20 to-pink-600/20' 
+                  : 'border-purple-500/30 bg-gradient-to-br from-purple-600/20 to-blue-600/20'
               }`}
             >
               <div className="flex justify-between items-start mb-3">
                 <div>
                   <div className="flex items-center space-x-2">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold shadow-lg ${
                       commitment.optionType === 0 
-                        ? 'bg-green-600 text-green-100' 
-                        : 'bg-red-600 text-red-100'
+                        ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-green-500/30' 
+                        : 'bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-red-500/30'
                     }`}>
-                      {commitment.optionType === 0 ? 'CALL' : 'PUT'}
+                      {commitment.optionType === 0 ? '📈 CALL' : '📉 PUT'}
                     </span>
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold shadow-lg ${
                       isOffer 
-                        ? 'bg-yellow-600 text-yellow-100' 
-                        : 'bg-purple-600 text-purple-100'
+                        ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-yellow-500/30' 
+                        : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-purple-500/30'
                     }`}>
-                      {isOffer ? 'OFFER' : 'DEMAND'}
+                      {isOffer ? '🎯 OFFER' : '🚀 DEMAND'}
                     </span>
                     {expired && (
-                      <span className="px-2 py-1 rounded text-xs font-medium bg-red-600 text-red-100">
-                        EXPIRED
-                      </span>
-                    )}
-                    {commitment.isFramentable && (
-                      <span className="px-2 py-1 rounded text-xs font-medium bg-blue-600 text-blue-100">
-                        FRACTIONABLE
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-red-600 to-red-700 text-white shadow-lg shadow-red-600/30 animate-pulse">
+                        ⚠️ EXPIRED
                       </span>
                     )}
                   </div>
@@ -374,7 +368,6 @@ export function CommitmentList({
                         optionType: commitment.optionType,
                         expiry: commitment.expiry,
                         nonce: commitment.nonce,
-                        isFramentable: commitment.isFramentable,
                         signature: commitment.signature,
                       }}
                       durationDays={selectedDuration}

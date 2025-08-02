@@ -29,7 +29,6 @@ export interface CommitmentCreateRequest {
   optionType: number;
   expiry: string;
   nonce: string;
-  isFramentable: boolean;
   signature: string;
 }
 

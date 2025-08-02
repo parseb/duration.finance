@@ -17,7 +17,6 @@ const mockCommitment = {
   commitmentType: 0, // LP_OFFER
   expiry: (Math.floor(Date.now() / 1000) + 3600).toString(), // 1 hour from now
   nonce: '1',
-  isFramentable: true,
   signature: '0x' + '0'.repeat(130), // Mock signature
 };
 

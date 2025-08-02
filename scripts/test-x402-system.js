@@ -91,7 +91,6 @@ async function testX402API() {
         commitmentType: 0,
         expiry: '99999999999',
         nonce: '123',
-        isFramentable: true,
         signature: '0x' + '0'.repeat(130)
       })
     });
@@ -129,7 +128,6 @@ async function testX402API() {
         commitmentType: 0,
         expiry: '99999999999',
         nonce: '123',
-        isFramentable: true,
         signature: '0x' + '0'.repeat(130)
       })
     });

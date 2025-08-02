@@ -86,7 +86,6 @@ export function LPCommitmentList({ showOnlyMyCommitments = false, onCancel }: LP
       optionType: commitment.optionType,
       expiry: commitment.expiry.toString(),
       nonce: commitment.nonce.toString(),
-      isFramentable: commitment.isFramentable,
     });
     return Buffer.from(data).toString('base64');
   };
@@ -206,11 +205,6 @@ export function LPCommitmentList({ showOnlyMyCommitments = false, onCancel }: LP
                     {expired && (
                       <span className="px-2 py-1 rounded text-xs font-medium bg-red-600 text-red-100">
                         EXPIRED
-                      </span>
-                    )}
-                    {commitment.isFramentable && (
-                      <span className="px-2 py-1 rounded text-xs font-medium bg-blue-600 text-blue-100">
-                        FRACTIONABLE
                       </span>
                     )}
                   </div>

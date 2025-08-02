@@ -15,7 +15,7 @@ library SignatureVerification {
     
     // Updated type hash for duration-centric LP commitments
     bytes32 public constant LP_COMMITMENT_TYPEHASH = keccak256(
-        "LPCommitment(address lp,address asset,uint256 amount,uint256 dailyPremiumUsdc,uint256 minLockDays,uint256 maxDurationDays,uint8 optionType,uint256 expiry,uint256 nonce,bool isFramentable)"
+        "LPCommitment(address lp,address asset,uint256 amount,uint256 dailyPremiumUsdc,uint256 minLockDays,uint256 maxDurationDays,uint8 optionType,uint256 expiry,uint256 nonce)"
     );
     
     /**
@@ -39,8 +39,7 @@ library SignatureVerification {
                 commitment.maxDurationDays,
                 uint8(commitment.optionType),
                 commitment.expiry,
-                commitment.nonce,
-                commitment.isFramentable
+                commitment.nonce
             )
         );
         
@@ -109,6 +108,5 @@ struct LPCommitment {
     uint8 optionType;              // CALL (0) or PUT (1)
     uint256 expiry;                // Commitment expiration timestamp  
     uint256 nonce;                 // Nonce for signature uniqueness
-    bool isFramentable;            // Allow partial taking
     bytes signature;               // EIP-712 signature
 }

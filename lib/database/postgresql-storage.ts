@@ -334,7 +334,6 @@ export class PostgreSQLCommitmentStorage implements CommitmentStorage {
       optionType: row.option_type === 'CALL' ? 0 : 1, // Convert enum to number
       expiry: BigInt(Math.floor(new Date(row.expiry).getTime() / 1000)), // Convert timestamp to Unix
       nonce: BigInt(row.nonce),
-      isFramentable: true, // Default to true since schema doesn't have this field
       signature: row.signature as `0x${string}`,
     };
   }

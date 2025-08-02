@@ -16,7 +16,6 @@ const mockCommitment = {
   commitmentType: 0,
   expiry: (Math.floor(Date.now() / 1000) + 3600).toString(),
   nonce: Math.floor(Math.random() * 1000000).toString(),
-  isFramentable: true,
   signature: '0x' + '0'.repeat(130),
 };
 

@@ -23,7 +23,6 @@ interface IDurationOptions {
         CommitmentType commitmentType; // LP_OFFER or TAKER_DEMAND
         uint256 expiry;                // Commitment expiration timestamp  
         uint256 nonce;                 // Nonce for signature uniqueness
-        bool isFramentable;            // Allow partial taking
         bytes signature;               // EIP-712 signature
     }
 

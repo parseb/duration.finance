@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 
 interface ActiveOption {
-  positionHash: string;
+  optionId?: number; // Option ID from contract (preferred)
+  positionHash: string; // Fallback identifier
   takerAddress: string;
   lpAddress: string;
   assetAddress: string;
@@ -85,6 +86,11 @@ export function ExerciseOptionButton({
         deadline: BigInt(Math.floor(Date.now() / 1000) + 300), // 5 minutes
       };
 
+      // Use optionId if available, otherwise fall back to hash-based lookup
+      const optionIdentifier = option.optionId !== undefined 
+        ? BigInt(option.optionId)
+        : BigInt(option.positionHash); // This would need contract support for hash lookup
+
       // Call exerciseOption on the contract
       writeContract({
         address: contractAddress,
@@ -94,9 +100,9 @@ export function ExerciseOptionButton({
             type: 'function',
             stateMutability: 'nonpayable',
             inputs: [
-              { name: 'positionHash', type: 'bytes32' },
+              { name: 'optionId', type: 'uint256' },
               {
-                name: 'settlementParams',
+                name: 'params',
                 type: 'tuple',
                 components: [
                   { name: 'method', type: 'uint8' },
@@ -110,7 +116,7 @@ export function ExerciseOptionButton({
           },
         ],
         functionName: 'exerciseOption',
-        args: [option.positionHash as `0x${string}`, settlementParams],
+        args: [optionIdentifier, settlementParams],
       });
 
     } catch (error) {

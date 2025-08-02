@@ -24,7 +24,6 @@ export const LP_COMMITMENT_TYPES = {
     { name: 'optionType', type: 'uint8' },
     { name: 'expiry', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
-    { name: 'isFramentable', type: 'bool' },
   ],
 } as const;
 
@@ -39,7 +38,6 @@ export interface LPCommitmentMessage {
   optionType: number; // 0 for CALL, 1 for PUT
   expiry: bigint;
   nonce: bigint;
-  isFramentable: boolean;
 }
 
 /**
@@ -81,7 +79,6 @@ export async function signLPCommitment(
     optionType: commitment.optionType as 0 | 1,
     expiry: commitment.expiry.toString(),
     nonce: commitment.nonce.toString(),
-    isFramentable: commitment.isFramentable,
     signature,
   };
 }
@@ -114,7 +111,6 @@ export async function verifyLPCommitment(
     optionType: commitment.optionType,
     expiry: BigInt(commitment.expiry),
     nonce: BigInt(commitment.nonce),
-    isFramentable: commitment.isFramentable,
   };
 
   return await verifyTypedData({
@@ -171,6 +167,5 @@ export function createLPCommitmentMessage(params: {
     optionType: params.optionType === 'CALL' ? 0 : 1,
     expiry: calculateExpiry(params.expiryHours),
     nonce: generateNonce(params.lp),
-    isFramentable: true, // Default to true for now
   };
 }

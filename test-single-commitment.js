@@ -33,7 +33,6 @@ async function testSingleCommitment() {
         commitmentType: 0, // LP_OFFER
         expiry: Math.floor(Date.now() / 1000) + (24 * 60 * 60), // 24 hours from now
         nonce: Math.floor(Math.random() * 1000000),
-        isFramentable: true,
         signature: '0x' + '1'.repeat(130) // Mock signature with 1s instead of 0s
       })
     });

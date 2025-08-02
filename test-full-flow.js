@@ -29,7 +29,6 @@ async function testFullFlow() {
         commitmentType: 0, // LP_OFFER
         expiry: Math.floor(Date.now() / 1000) + (24 * 60 * 60),
         nonce: Math.floor(Math.random() * 1000000),
-        isFramentable: true,
         signature: '0x' + '2'.repeat(130)
       })
     });

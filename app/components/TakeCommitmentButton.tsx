@@ -50,18 +50,18 @@ export function TakeCommitmentButton({
         throw new Error('Contract address not configured');
       }
 
-      // Prepare commitment struct for contract call
+      // Prepare commitment struct for contract call (using new OptionCommitment format)
       const commitmentForContract = {
-        lp: commitment.lp,
+        creator: commitment.lp, // LP is the creator for LP offers
         asset: commitment.asset,
         amount: commitment.amount,
-        dailyPremiumUsdc: commitment.dailyPremiumUsdc,
-        minLockDays: commitment.minLockDays,
+        premiumAmount: commitment.dailyPremiumUsdc, // Map legacy field
+        minDurationDays: commitment.minLockDays, // Map legacy field
         maxDurationDays: commitment.maxDurationDays,
         optionType: commitment.optionType,
+        commitmentType: 0, // LP_OFFER
         expiry: commitment.expiry,
         nonce: commitment.nonce,
-        isFramentable: commitment.isFramentable,
         signature: commitment.signature,
       };
 
@@ -86,16 +86,16 @@ export function TakeCommitmentButton({
                 name: 'commitment',
                 type: 'tuple',
                 components: [
-                  { name: 'lp', type: 'address' },
+                  { name: 'creator', type: 'address' },
                   { name: 'asset', type: 'address' },
                   { name: 'amount', type: 'uint256' },
-                  { name: 'dailyPremiumUsdc', type: 'uint256' },
-                  { name: 'minLockDays', type: 'uint256' },
+                  { name: 'premiumAmount', type: 'uint256' },
+                  { name: 'minDurationDays', type: 'uint256' },
                   { name: 'maxDurationDays', type: 'uint256' },
                   { name: 'optionType', type: 'uint8' },
+                  { name: 'commitmentType', type: 'uint8' },
                   { name: 'expiry', type: 'uint256' },
                   { name: 'nonce', type: 'uint256' },
-                  { name: 'isFramentable', type: 'bool' },
                   { name: 'signature', type: 'bytes' },
                 ],
               },

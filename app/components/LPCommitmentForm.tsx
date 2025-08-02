@@ -19,7 +19,6 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
   const [minLockDays, setMinLockDays] = useState('1');
   const [maxDuration, setMaxDuration] = useState('7');
   const [optionType, setOptionType] = useState<'CALL' | 'PUT'>('CALL');
-  const [isFramentable, setIsFramentable] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Mock current price - in real app this would come from 1inch API
@@ -80,7 +79,6 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
         optionType: optionType === 'CALL' ? 0 : 1,
         expiry: BigInt(expiry),
         nonce: BigInt(nonce),
-        isFramentable: isFramentable,
         signature: mockSignature,
       };
 
@@ -95,7 +93,6 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
         optionType: commitment.optionType,
         expiry: commitment.expiry.toString(),
         nonce: commitment.nonce.toString(),
-        isFramentable: commitment.isFramentable,
         signature: commitment.signature,
       };
 
@@ -249,18 +246,6 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
             </div>
           )}
           
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="fractionable"
-              checked={isFramentable}
-              onChange={(e) => setIsFramentable(e.target.checked)}
-              className="rounded border-blue-600"
-            />
-            <label htmlFor="fractionable" className="text-sm">
-              Allow partial taking
-            </label>
-          </div>
         </div>
         
         <button 
@@ -277,28 +262,6 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
           </div>
         )}
 
-        {paymentInfo && (
-          <div className="mt-4 p-4 bg-yellow-600/20 border border-yellow-500 rounded-lg">
-            <h4 className="text-yellow-400 font-medium mb-2">Payment Required</h4>
-            <p className="text-yellow-300 text-sm mb-3">
-              Creating an LP offer requires a payment of <strong>{paymentInfo.cost}</strong> to prevent spam.
-            </p>
-            <div className="text-xs text-yellow-300/80 space-y-1">
-              <p><strong>Step 1:</strong> {paymentInfo.instructions.step1}</p>
-              <p><strong>Step 2:</strong> {paymentInfo.instructions.step2}</p>
-              <p><strong>Step 3:</strong> {paymentInfo.instructions.step3}</p>
-            </div>
-            <div className="mt-3 p-2 bg-yellow-900/30 rounded text-xs font-mono">
-              <p className="text-yellow-200">Recipient: {paymentInfo.recipient}</p>
-            </div>
-            <button 
-              onClick={() => setPaymentInfo(null)}
-              className="mt-3 text-xs text-yellow-400 hover:text-yellow-300"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
       </div>
     </form>
   );

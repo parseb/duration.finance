@@ -22,7 +22,6 @@ export const COMMITMENT_TYPES = {
     { name: 'commitmentType', type: 'uint8' },
     { name: 'expiry', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
-    { name: 'isFramentable', type: 'bool' },
   ],
 } as const;
 
@@ -38,7 +37,6 @@ export const LP_COMMITMENT_TYPES = {
     { name: 'optionType', type: 'uint8' },
     { name: 'expiry', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
-    { name: 'isFramentable', type: 'bool' },
   ],
 } as const;
 
@@ -66,7 +64,6 @@ export interface OptionCommitment {
   commitmentType: CommitmentType;
   expiry: bigint;
   nonce: bigint;
-  isFramentable: boolean;
 }
 
 // Signed commitment
@@ -85,7 +82,6 @@ export interface LPCommitment {
   optionType: OptionType;
   expiry: bigint;
   nonce: bigint;
-  isFramentable: boolean;
 }
 
 // Legacy LP Commitment with signature
@@ -309,7 +305,6 @@ export function hashLPCommitment(commitment: LPCommitment): string {
     optionType: commitment.optionType,
     expiry: commitment.expiry.toString(),
     nonce: commitment.nonce.toString(),
-    isFramentable: commitment.isFramentable,
   });
 
   // Simple hash for now - in production, use keccak256 like the contract

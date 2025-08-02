@@ -27,6 +27,9 @@ import { MakeCommitmentForm } from './components/MakeCommitmentForm';
 import { CommitmentList } from './components/CommitmentList';
 import { TakeCommitmentButton } from './components/TakeCommitmentButton';
 import { ExerciseOptionButton } from './components/ExerciseOptionButton';
+import { Portfolio } from './components/Portfolio';
+import { EthPriceIndicator, LivePriceBadge } from './components/PriceDisplay';
+import { useWethPrice } from '../hooks/use-prices';
 
 // Helper to detect if we're in a Farcaster mini app environment
 function useIsMiniApp() {
@@ -116,35 +119,52 @@ export default function Page() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 text-white">
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 text-white relative overflow-hidden">
+      {/* Animated Background Elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-pink-500/20 to-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-br from-yellow-500/10 to-orange-500/10 rounded-full blur-3xl animate-ping opacity-20"></div>
+      </div>
+
       {/* Header */}
-      <header className="flex justify-between items-center p-4 border-b border-blue-600">
-        <div className="flex items-center space-x-2">
-          <h1 className="text-xl font-bold">| duration |</h1>
+      <header className="relative flex justify-between items-center p-6 bg-gradient-to-r from-purple-800/50 to-blue-800/50 backdrop-blur-lg border-b border-purple-500/30">
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl flex items-center justify-center shadow-2xl animate-pulse">
+              <span className="text-2xl">⚡</span>
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-yellow-400 via-orange-500 to-pink-500 bg-clip-text text-transparent">
+                Duration.Finance
+              </h1>
+              <p className="text-purple-300 text-sm font-medium">⚡ Lightning Fast Options Protocol</p>
+            </div>
+          </div>
         </div>
         
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-3">
           {isMiniApp === true && context?.client.added && (
             <button
               onClick={handleAddFrame}
-              className="px-3 py-1 bg-blue-600 rounded-lg text-sm"
+              className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 rounded-xl text-sm font-semibold shadow-lg transform hover:scale-105 transition-all duration-200"
             >
-              SAVE
+              ✨ SAVE
             </button>
           )}
           {isMiniApp === true && (
             <>
               <button
                 onClick={() => viewProfile()}
-                className="px-3 py-1 bg-transparent border border-blue-400 rounded-lg text-sm"
+                className="px-4 py-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 border border-purple-400/50 rounded-xl text-sm font-semibold backdrop-blur-sm transform hover:scale-105 transition-all duration-200"
               >
-                PROFILE
+                👤 PROFILE
               </button>
               <button
                 onClick={close}
-                className="px-3 py-1 bg-transparent text-sm"
+                className="px-4 py-2 text-sm font-semibold text-gray-300 hover:text-white transform hover:scale-105 transition-all duration-200"
               >
-                CLOSE
+                ✕ CLOSE
               </button>
             </>
           )}
@@ -152,36 +172,66 @@ export default function Page() {
       </header>
 
       {/* Enhanced Wallet Connection */}
-      <div className="p-4 bg-blue-800 border-b border-blue-600">
-        <WalletConnection />
+      <div className="relative p-6 bg-gradient-to-r from-purple-800/30 to-blue-800/30 backdrop-blur-lg border-b border-purple-500/20">
+        <div className="flex justify-between items-center">
+          <WalletConnection />
+          <div className="flex items-center space-x-4">
+            <LivePriceBadge />
+            <EthPriceIndicator size="sm" />
+          </div>
+        </div>
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex border-b border-blue-600">
-        {([{key: 'make', label: 'Make'}, {key: 'take', label: 'Take'}, {key: 'portfolio', label: 'Portfolio'}] as const).map((tab) => (
+      <div className="relative flex bg-gradient-to-r from-purple-800/20 to-blue-800/20 backdrop-blur-sm border-b border-purple-500/20">
+        {([
+          {key: 'make', label: '🚀 Create', icon: '⚡'},
+          {key: 'take', label: '💎 Trade', icon: '🎯'}, 
+          {key: 'portfolio', label: '📊 Portfolio', icon: '💰'}
+        ] as const).map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as any)}
-            className={`flex-1 py-3 px-4 text-center font-medium transition-colors ${
-              activeTab === tab.key 
-                ? 'bg-blue-600 text-white border-b-2 border-yellow-500' 
-                : 'bg-blue-800 text-blue-200 hover:bg-blue-700'
+            className={`relative flex-1 py-4 px-6 text-center font-semibold transition-all duration-300 transform hover:scale-105 ${
+              activeTab === tab.key
+                ? 'text-white bg-gradient-to-r from-purple-600/50 to-pink-600/50 shadow-lg backdrop-blur-sm'
+                : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-pink-600/20'
             }`}
           >
-            {tab.label}
+            <div className="flex items-center justify-center space-x-2">
+              <span className="text-lg">{tab.icon}</span>
+              <span>{tab.label}</span>
+            </div>
+            {activeTab === tab.key && (
+              <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-t-full animate-pulse"></div>
+            )}
           </button>
         ))}
       </div>
 
       {/* Main Content */}
-      <main className="p-4 pb-20">
-        {activeTab === 'make' && <MakeTab />}
-        {activeTab === 'take' && <TakeTab />}
-        {activeTab === 'portfolio' && <PortfolioTab />}
+      <main className="relative p-6 pb-20">
+        <div className="max-w-4xl mx-auto">
+          {activeTab === 'make' && <MakeTab />}
+          {activeTab === 'take' && <TakeTab />}
+          {activeTab === 'portfolio' && <Portfolio />}
+        </div>
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-blue-600 bg-blue-900 p-4">
+      <footer className="relative border-t border-purple-500/20 bg-gradient-to-r from-purple-900/50 to-blue-900/50 backdrop-blur-lg p-6">
+        <div className="text-center">
+          <p className="text-purple-300 text-sm">
+            ⚡ Powered by <span className="text-yellow-400 font-semibold">Duration.Finance</span> • Built on Base
+          </p>
+          <div className="flex justify-center items-center space-x-4 mt-2 text-xs text-purple-400">
+            <span>Real-time 1inch pricing</span>
+            <span>•</span>
+            <span>Lightning fast settlements</span>
+            <span>•</span>
+            <span>Zero governance complexity</span>
+          </div>
+        </div>
         <div className="flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0">
           <div className="text-sm text-blue-300">
             2025 Duration.Finance - A first of its kind duration marketplace
@@ -257,8 +307,9 @@ function TakeTab() {
   const [sortBy, setSortBy] = useState<'daily-cost' | 'total-cost' | 'yield'>('daily-cost');
   const [selectedDuration, setSelectedDuration] = useState(7);
   
-  // Mock current price
-  const currentPrice = 3836.50;
+  // Get real-time price from the price service
+  const { price } = useWethPrice();
+  const currentPrice = price?.price || 3836.50; // Fallback to default if no price data
   
   // Expanded mock liquidity data for better chart visualization
   const mockLiquidity = [
@@ -504,75 +555,3 @@ function TakeTab() {
   );
 }
 
-function PortfolioTab() {
-  // Mock current price - in real app this would come from 1inch API
-  const currentPrice = 3836.50;
-  
-  return (
-    <div className="space-y-6">
-      <div className="bg-blue-800 rounded-lg p-6">
-        <h2 className="text-xl font-bold mb-4 text-yellow-500">Your Portfolio</h2>
-        
-        {/* Summary Stats */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-blue-700 rounded-lg p-4">
-            <div className="text-blue-200 text-sm">Total P&L</div>
-            <div className="text-green-400 text-xl font-bold">+2.3 ETH</div>
-          </div>
-          <div className="bg-blue-700 rounded-lg p-4">
-            <div className="text-blue-200 text-sm">Active Positions</div>
-            <div className="text-white text-xl font-bold">3</div>
-          </div>
-        </div>
-        
-        {/* Active Positions */}
-        <h3 className="text-lg font-semibold mb-3">Active Positions</h3>
-        <div className="space-y-3">
-          {[1, 2].map((i) => (
-            <div key={i} className="bg-blue-700 rounded-lg p-4 border border-blue-600">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <div className="text-white font-medium">WETH Call Option</div>
-                  <div className="text-blue-200 text-sm">1.0 WETH @ $4,000</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-green-400 font-bold">+0.5 ETH</div>
-                  <div className="text-blue-200 text-sm">Unrealized P&L</div>
-                </div>
-              </div>
-              
-              <div className="flex justify-between items-center text-sm text-blue-200 mb-3">
-                <span>Expires in: 1.2 days</span>
-                <span>Premium Paid: 0.2 ETH</span>
-              </div>
-              
-              <ExerciseOptionButton
-                option={{
-                  positionHash: `0x${i.toString().padStart(64, '0')}`,
-                  takerAddress: '0x742d35Cc6635C0532925a3b8D7AA25b1c7c7c7c7', // Mock taker
-                  lpAddress: '0x8ba1f109551bD432803012645Hac136c42Ed1234', // Mock LP
-                  assetAddress: '0x4200000000000000000000000000000000000006', // WETH
-                  amount: BigInt('1000000000000000000'), // 1 ETH
-                  strikePrice: BigInt('4000000000000000000000'), // $4000
-                  premiumPaidUsdc: BigInt('200000000'), // $200 USDC
-                  optionType: 0, // CALL
-                  expiryTimestamp: new Date(Date.now() + 86400000 * 1.2), // 1.2 days from now
-                  exerciseStatus: 'active',
-                }}
-                currentPrice={currentPrice}
-                onSuccess={(hash) => {
-                  console.log('Option exercised:', hash);
-                  alert('Option exercised successfully!');
-                }}
-                onError={(error) => {
-                  console.error('Exercise failed:', error);
-                  alert(`Failed to exercise: ${error}`);
-                }}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}

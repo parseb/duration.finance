@@ -82,7 +82,6 @@ contract SettlementVerificationTest is Test {
             commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: 1,
-            isFramentable: false,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
 
@@ -154,7 +153,6 @@ contract SettlementVerificationTest is Test {
             commitmentType: IDurationOptions.CommitmentType.LP_OFFER,
             expiry: block.timestamp + 1 hours,
             nonce: initialNonce,
-            isFramentable: true,
             signature: abi.encodePacked(bytes32(0), bytes32(0), uint8(27))
         });
 

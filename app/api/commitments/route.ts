@@ -141,7 +141,6 @@ export async function POST(request: NextRequest) {
         commitmentType: commitmentData.commitmentType,
         expiry: BigInt(commitmentData.expiry),
         nonce: BigInt(commitmentData.nonce),
-        isFramentable: commitmentData.isFramentable,
         signature: commitmentData.signature as `0x${string}`,
       };
 
@@ -156,7 +155,6 @@ export async function POST(request: NextRequest) {
         optionType: commitment.optionType,
         expiry: commitment.expiry,
         nonce: commitment.nonce,
-        isFramentable: commitment.isFramentable,
         signature: commitment.signature,
       };
       commitmentId = await storage.store(legacyCommitment);
@@ -172,7 +170,6 @@ export async function POST(request: NextRequest) {
         optionType: commitmentData.optionType,
         expiry: BigInt(commitmentData.expiry),
         nonce: BigInt(commitmentData.nonce),
-        isFramentable: commitmentData.isFramentable,
         signature: commitmentData.signature as `0x${string}`,
       };
 

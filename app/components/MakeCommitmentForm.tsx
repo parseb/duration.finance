@@ -31,7 +31,6 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
   const [durationRange, setDurationRange] = useState([1, 7]); // [min, max] days
   const [optionType, setOptionType] = useState<'CALL' | 'PUT'>('CALL');
   const [commitmentType, setCommitmentType] = useState<'OFFER' | 'DEMAND'>('OFFER');
-  const [isFramentable, setIsFramentable] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingCommitment, setPendingCommitment] = useState<OptionCommitment | null>(null);
   
@@ -107,7 +106,6 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
         commitmentType: commitment.commitmentType,
         expiry: commitment.expiry.toString(),
         nonce: commitment.nonce.toString(),
-        isFramentable: commitment.isFramentable,
         signature: commitment.signature,
       };
 
@@ -198,7 +196,6 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
         commitmentType: commitmentType === 'OFFER' ? CommitmentType.LP_OFFER : CommitmentType.TAKER_DEMAND,
         expiry: BigInt(expiry),
         nonce: BigInt(nonce),
-        isFramentable: isFramentable,
       };
 
       // Get the correct domain for the current chain
@@ -230,23 +227,37 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="bg-blue-800 rounded-lg p-6">
-        <h2 className="text-xl font-bold mb-4 text-yellow-500">Make Commitment</h2>
-        <p className="text-blue-200 mb-6">
-          Create an {commitmentType.toLowerCase()} for others to take. 
-          {isOffer ? ' Set your daily premium rate and duration range.' : ' Specify the premium you\'re willing to pay for specific duration.'}
+      <div className="bg-gradient-to-br from-purple-800/50 to-blue-800/50 backdrop-blur-lg rounded-2xl p-8 border border-purple-500/20 shadow-2xl">
+        <h2 className="text-2xl font-bold mb-4 bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent flex items-center">
+          ⚡ Create Commitment
+        </h2>
+        <p className="text-purple-200 mb-8 bg-purple-500/10 p-4 rounded-xl border border-purple-500/20">
+          <span className="font-semibold">
+            {commitmentType === 'OFFER' ? '🎯 ' : '🚀 '}
+            Create a {commitmentType.toLowerCase()} for others to take.
+          </span>
+          <br />
+          <span className="text-sm opacity-80">
+            {isOffer ? 'Set your daily premium rate and duration range.' : 'Specify the premium you\'re willing to pay for specific duration.'}
+          </span>
         </p>
         
         {/* Current Price Display */}
-        <div className="bg-blue-700 rounded-lg p-4 mb-6">
+        <div className="bg-gradient-to-r from-emerald-600/30 to-green-600/30 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-emerald-500/30 shadow-lg hover:shadow-xl transition-all duration-300">
           <div className="flex justify-between items-center">
             <div>
-              <div className="text-blue-200 text-sm">Current WETH Price</div>
-              <div className="text-white text-xl font-bold">${currentPrice.toLocaleString()}</div>
+              <div className="text-emerald-300 text-sm font-medium flex items-center">
+                ⚡ Current WETH Price
+              </div>
+              <div className="text-white text-2xl font-bold bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text text-transparent">
+                ${currentPrice.toLocaleString()}
+              </div>
             </div>
             <div className="text-right">
-              <div className="text-blue-200 text-sm">Strike Price</div>
-              <div className="text-yellow-500 font-medium">Market Price @ Taking</div>
+              <div className="text-emerald-300 text-sm font-medium">🎯 Strike Price</div>
+              <div className="text-yellow-400 font-bold bg-yellow-500/20 px-3 py-2 rounded-xl border border-yellow-400/30">
+                Market Price @ Taking
+              </div>
             </div>
           </div>
         </div>
@@ -271,57 +282,57 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
           {/* Option Type and Commitment Type Toggle Buttons */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-2">Option Type</label>
-              <div className="flex bg-blue-700 rounded-lg p-1">
+              <label className="block text-sm font-medium mb-3 text-purple-300">🎯 Option Type</label>
+              <div className="flex bg-gradient-to-r from-purple-800/50 to-blue-800/50 backdrop-blur-sm rounded-xl p-1 border border-purple-500/30">
                 <button
                   type="button"
                   onClick={() => setOptionType('CALL')}
-                  className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                  className={`flex-1 py-3 px-4 rounded-lg text-sm font-bold transition-all duration-300 transform hover:scale-105 ${
                     optionType === 'CALL'
-                      ? 'bg-green-600 text-white'
-                      : 'text-blue-200 hover:text-white'
+                      ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg shadow-green-500/30'
+                      : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-green-500/20 hover:to-emerald-500/20'
                   }`}
                 >
-                  CALL
+                  📈 CALL
                 </button>
                 <button
                   type="button"
                   onClick={() => setOptionType('PUT')}
-                  className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                  className={`flex-1 py-3 px-4 rounded-lg text-sm font-bold transition-all duration-300 transform hover:scale-105 ${
                     optionType === 'PUT'
-                      ? 'bg-red-600 text-white'
-                      : 'text-blue-200 hover:text-white'
+                      ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white shadow-lg shadow-red-500/30'
+                      : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-red-500/20 hover:to-pink-500/20'
                   }`}
                 >
-                  PUT
+                  📉 PUT
                 </button>
               </div>
             </div>
             
             <div>
-              <label className="block text-sm font-medium mb-2">Commitment Type</label>
-              <div className="flex bg-blue-700 rounded-lg p-1">
+              <label className="block text-sm font-medium mb-3 text-purple-300">💡 Commitment Type</label>
+              <div className="flex bg-gradient-to-r from-purple-800/50 to-blue-800/50 backdrop-blur-sm rounded-xl p-1 border border-purple-500/30">
                 <button
                   type="button"
                   onClick={() => setCommitmentType('OFFER')}
-                  className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                  className={`flex-1 py-3 px-4 rounded-lg text-sm font-bold transition-all duration-300 transform hover:scale-105 ${
                     commitmentType === 'OFFER'
-                      ? 'bg-yellow-600 text-white'
-                      : 'text-blue-200 hover:text-white'
+                      ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg shadow-yellow-500/30'
+                      : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-yellow-500/20 hover:to-orange-500/20'
                   }`}
                 >
-                  OFFER
+                  🎯 OFFER
                 </button>
                 <button
                   type="button"
                   onClick={() => setCommitmentType('DEMAND')}
-                  className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                  className={`flex-1 py-3 px-4 rounded-lg text-sm font-bold transition-all duration-300 transform hover:scale-105 ${
                     commitmentType === 'DEMAND'
-                      ? 'bg-purple-600 text-white'
-                      : 'text-blue-200 hover:text-white'
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30'
+                      : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-purple-500/20 hover:to-pink-500/20'
                   }`}
                 >
-                  DEMAND
+                  🚀 DEMAND
                 </button>
               </div>
             </div>
@@ -451,41 +462,38 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
             </div>
           )}
           
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="fractionable"
-              checked={isFramentable}
-              onChange={(e) => setIsFramentable(e.target.checked)}
-              className="rounded border-blue-600"
-            />
-            <label htmlFor="fractionable" className="text-sm">
-              Allow partial taking
-            </label>
-          </div>
         </div>
         
         <button 
           type="submit"
           disabled={!isValid || isSubmitting || isSigning}
-          className="w-full mt-6 py-3 bg-yellow-500 hover:bg-yellow-400 disabled:bg-gray-600 disabled:cursor-not-allowed text-blue-900 font-bold rounded-lg transition-colors"
+          className="w-full mt-8 py-4 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 hover:shadow-lg disabled:transform-none disabled:shadow-none shadow-lg shadow-yellow-500/30"
         >
-          {isSigning ? 'Please sign in wallet...' : 
-           isSubmitting ? 'Creating Commitment...' : 
-           `Create ${commitmentType} Commitment`}
+          <div className="flex items-center justify-center space-x-2">
+            <span className="text-xl">
+              {isSigning ? '✍️' : isSubmitting ? '⚡' : commitmentType === 'OFFER' ? '🎯' : '🚀'}
+            </span>
+            <span>
+              {isSigning ? 'Please sign in wallet...' : 
+               isSubmitting ? 'Creating Commitment...' : 
+               `Create ${commitmentType} Commitment`}
+            </span>
+          </div>
         </button>
 
         {!isConnected && (
-          <div className="mt-4 p-3 bg-red-600/20 border border-red-500 rounded-lg">
-            <p className="text-red-300 text-sm">Please connect your wallet to create a commitment</p>
+          <div className="mt-6 p-4 bg-gradient-to-r from-red-600/20 to-pink-600/20 border border-red-500/50 rounded-2xl backdrop-blur-sm">
+            <p className="text-red-300 text-sm font-medium flex items-center">
+              🔒 Please connect your wallet to create a commitment
+            </p>
           </div>
         )}
         
         {isConnected && !validAddress && (
-          <div className="mt-4 p-3 bg-yellow-600/20 border border-yellow-500 rounded-lg">
-            <p className="text-yellow-300 text-sm">
-              Wallet connection issue detected. Please disconnect and reconnect your wallet.
-              {address && <span className="block text-xs mt-1">Current address: {address}</span>}
+          <div className="mt-6 p-4 bg-gradient-to-r from-yellow-600/20 to-orange-600/20 border border-yellow-500/50 rounded-2xl backdrop-blur-sm">
+            <p className="text-yellow-300 text-sm font-medium">
+              ⚠️ Wallet connection issue detected. Please disconnect and reconnect your wallet.
+              {address && <span className="block text-xs mt-2 opacity-75">Current address: {address}</span>}
             </p>
           </div>
         )}

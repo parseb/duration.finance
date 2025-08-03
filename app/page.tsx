@@ -30,6 +30,7 @@ import { ExerciseOptionButton } from './components/ExerciseOptionButton';
 import { Portfolio } from './components/Portfolio';
 import { EthPriceIndicator, LivePriceBadge } from './components/PriceDisplay';
 import { useWethPrice } from '../hooks/use-prices';
+import { BrandedHeader, NavigationLogo, DurationSpinner } from './components/Logo';
 
 // Helper to detect if we're in a Farcaster mini app environment
 function useIsMiniApp() {
@@ -120,27 +121,18 @@ export default function Page() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 text-white relative overflow-hidden">
-      {/* Animated Background Elements */}
+      {/* Animated Background Elements with Orange Harmony */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-pink-500/20 to-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-full blur-3xl animate-pulse delay-1000"></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-br from-yellow-500/10 to-orange-500/10 rounded-full blur-3xl animate-ping opacity-20"></div>
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-orange-500/25 to-pink-500/20 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-blue-500/20 to-orange-500/15 rounded-full blur-3xl animate-pulse delay-1000"></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-br from-orange-500/15 to-yellow-500/10 rounded-full blur-3xl animate-ping opacity-30"></div>
+        <div className="absolute top-20 right-1/4 w-60 h-60 bg-gradient-to-br from-orange-400/10 to-red-500/10 rounded-full blur-2xl animate-pulse delay-2000"></div>
       </div>
 
       {/* Header */}
-      <header className="relative flex justify-between items-center p-6 bg-gradient-to-r from-purple-800/50 to-blue-800/50 backdrop-blur-lg border-b border-purple-500/30">
+      <header className="relative flex justify-between items-center p-6 bg-gradient-to-r from-purple-800/50 via-blue-800/50 to-orange-800/30 backdrop-blur-lg border-b border-purple-500/30 shadow-lg shadow-orange-500/5">
         <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl flex items-center justify-center shadow-2xl animate-pulse">
-              <span className="text-2xl">⚡</span>
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-yellow-400 via-orange-500 to-pink-500 bg-clip-text text-transparent">
-                Duration.Finance
-              </h1>
-              <p className="text-purple-300 text-sm font-medium">⚡ Lightning Fast Options Protocol</p>
-            </div>
-          </div>
+          <NavigationLogo />
         </div>
         
         <div className="flex items-center space-x-3">
@@ -177,25 +169,24 @@ export default function Page() {
           <WalletConnection />
           <div className="flex items-center space-x-4">
             <LivePriceBadge />
-            <EthPriceIndicator size="sm" />
           </div>
         </div>
       </div>
 
       {/* Tab Navigation */}
-      <div className="relative flex bg-gradient-to-r from-purple-800/20 to-blue-800/20 backdrop-blur-sm border-b border-purple-500/20">
+      <div className="relative flex bg-gradient-to-r from-purple-800/20 via-blue-800/20 to-orange-800/15 backdrop-blur-sm border-b border-purple-500/20">
         {([
-          {key: 'make', label: '🚀 Create', icon: '⚡'},
-          {key: 'take', label: '💎 Trade', icon: '🎯'}, 
-          {key: 'portfolio', label: '📊 Portfolio', icon: '💰'}
+          {key: 'make', label: 'Offer', icon: '📋'},
+          {key: 'take', label: 'Take', icon: '🎯'}, 
+          {key: 'portfolio', label: 'Portfolio', icon: '📊'}
         ] as const).map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as any)}
             className={`relative flex-1 py-4 px-6 text-center font-semibold transition-all duration-300 transform hover:scale-105 ${
               activeTab === tab.key
-                ? 'text-white bg-gradient-to-r from-purple-600/50 to-pink-600/50 shadow-lg backdrop-blur-sm'
-                : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-purple-600/20 hover:to-pink-600/20'
+                ? 'text-white bg-gradient-to-r from-orange-600/40 via-purple-600/50 to-pink-600/40 shadow-lg backdrop-blur-sm'
+                : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-orange-600/15 hover:via-purple-600/20 hover:to-pink-600/15'
             }`}
           >
             <div className="flex items-center justify-center space-x-2">
@@ -203,7 +194,7 @@ export default function Page() {
               <span>{tab.label}</span>
             </div>
             {activeTab === tab.key && (
-              <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-t-full animate-pulse"></div>
+              <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-orange-600 rounded-t-full animate-pulse shadow-lg shadow-orange-500/50"></div>
             )}
           </button>
         ))}
@@ -219,15 +210,15 @@ export default function Page() {
       </main>
 
       {/* Footer */}
-      <footer className="relative border-t border-purple-500/20 bg-gradient-to-r from-purple-900/50 to-blue-900/50 backdrop-blur-lg p-6">
+      <footer className="relative border-t border-purple-500/20 bg-gradient-to-r from-purple-900/50 via-blue-900/50 to-orange-900/30 backdrop-blur-lg p-6">
         <div className="text-center">
           <p className="text-purple-300 text-sm">
-            ⚡ Powered by <span className="text-yellow-400 font-semibold">Duration.Finance</span> • Built on Base
+            ⚡ Powered by <span className="text-transparent bg-gradient-to-r from-orange-400 to-orange-600 bg-clip-text font-bold">Duration.Finance</span>
           </p>
           <div className="flex justify-center items-center space-x-4 mt-2 text-xs text-purple-400">
             <span>Real-time 1inch pricing</span>
             <span>•</span>
-            <span>Lightning fast settlements</span>
+            <span>Fast settlements</span>
             <span>•</span>
             <span>Zero governance complexity</span>
           </div>

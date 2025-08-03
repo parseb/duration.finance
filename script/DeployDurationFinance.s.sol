@@ -36,7 +36,7 @@ contract DeployDurationFinance is Script {
         settlementRouter = _deploySettlementRouter(deployer);
         
         // 2. Deploy DurationOptions (main contract)
-        durationOptions = _deployDurationOptions(deployer, settlementRouter);
+        durationOptions = _deployDurationOptions(deployer);
         
         // 4. Setup initial configuration
         _setupConfiguration();
@@ -64,12 +64,11 @@ contract DeployDurationFinance is Script {
      * @notice Deploy DurationOptions main contract
      */
     function _deployDurationOptions(
-        address deployer,
-        address _settlementRouter
+        address deployer
     ) internal returns (address) {
         console.log("\n2. Deploying DurationOptions...");
         
-        DurationOptions options = new DurationOptions(_settlementRouter);
+        DurationOptions options = new DurationOptions();
         
         console.log("   DurationOptions deployed:", address(options));
         return address(options);
@@ -140,7 +139,7 @@ contract DeployTestnet is DeployDurationFinance {
         settlementRouter = _deploySettlementRouter(deployer);
         
         // 2. Deploy DurationOptions (main contract)
-        durationOptions = _deployDurationOptions(deployer, settlementRouter);
+        durationOptions = _deployDurationOptions(deployer);
         
         // 4. Setup initial configuration
         _setupConfiguration();

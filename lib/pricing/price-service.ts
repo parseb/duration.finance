@@ -72,7 +72,7 @@ class PriceService {
   }
 
   /**
-   * Fetch price from 1inch API
+   * Fetch price from backend API (which proxies to 1inch)
    */
   private async fetchFromOneInch(assetAddress: string): Promise<PriceData> {
     const assetKey = this.getAssetKey(assetAddress);
@@ -87,42 +87,59 @@ class PriceService {
       };
     }
 
-    // Get quote for 1 unit of the asset in USDC
-    const fromToken = assetAddress;
-    const toToken = this.ASSETS.USDC;
-    const amount = '1000000000000000000'; // 1 ETH in wei
-
-    const url = `https://api.1inch.dev/swap/v6.0/${this.BASE_CHAIN_ID}/quote?` +
-      `src=${fromToken}&dst=${toToken}&amount=${amount}&includeProtocols=true&includeGas=true`;
+    // Call our backend API instead of 1inch directly
+    const url = `/api/prices?asset=${encodeURIComponent(assetAddress)}`;
 
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Duration.Finance/1.0',
       },
     });
 
     if (!response.ok) {
-      throw new Error(`1inch API error: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`Price API error: ${response.status} - ${errorText}`);
     }
 
-    const data: OneInchQuoteResponse = await response.json();
+    const data = await response.json();
     
-    // Convert USDC amount (6 decimals) to USD price
-    const usdcAmount = parseInt(data.toAmount) / 1e6;
+    if (!data.success || !data.price) {
+      throw new Error('Invalid price response from API');
+    }
     
-    return {
-      price: usdcAmount,
-      timestamp: Date.now(),
-      asset: assetKey,
-      source: '1inch',
-    };
+    return data.price;
   }
 
   /**
    * Get multiple prices at once
    */
   async getPrices(assetAddresses: string[]): Promise<Map<string, PriceData>> {
+    try {
+      // Use backend API for batch price requests
+      const assetsParam = assetAddresses.join(',');
+      const url = `/api/prices?assets=${encodeURIComponent(assetsParam)}`;
+
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.prices) {
+          const priceMap = new Map<string, PriceData>();
+          Object.entries(data.prices).forEach(([address, priceData]) => {
+            priceMap.set(address, priceData as PriceData);
+          });
+          return priceMap;
+        }
+      }
+    } catch (error) {
+      console.warn('Batch price fetch failed, falling back to individual requests:', error);
+    }
+
+    // Fallback to individual requests if batch fails
     const pricePromises = assetAddresses.map(async (address) => {
       const price = await this.getCurrentPrice(address);
       return [address, price] as const;

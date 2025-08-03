@@ -5,19 +5,23 @@ import { useAccount } from 'wagmi';
 import { SignedOptionCommitment, CommitmentType } from '../../lib/eip712/verification';
 import { formatEther, formatUnits } from 'viem';
 import { TakeCommitmentButton } from './TakeCommitmentButton';
+import { useWethPrice } from '../../hooks/use-prices';
 
 interface CommitmentListProps {
   showOnlyMyCommitments?: boolean;
   commitmentType?: 'OFFER' | 'DEMAND' | 'ALL';
   onCancel?: (commitmentId: string) => void;
+  showMyCommitmentStatus?: boolean; // Show status tabs for my commitments
 }
 
 export function CommitmentList({ 
   showOnlyMyCommitments = false, 
   commitmentType = 'ALL',
-  onCancel 
+  onCancel,
+  showMyCommitmentStatus = false
 }: CommitmentListProps) {
   const { address } = useAccount();
+  const { price: wethPrice } = useWethPrice();
   const [commitments, setCommitments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -235,7 +239,7 @@ export function CommitmentList({
         {commitments.map((commitment) => {
           const commitmentId = commitment.id || hashCommitment(commitment); // Use database ID if available
           const expired = isExpired(commitment.expiry);
-          const currentPrice = 3836.50; // Mock price
+          const currentPrice = wethPrice?.price || 3836.50; // Real-time price with fallback
           const isOffer = (commitment.commitmentType || 0) === CommitmentType.LP_OFFER;
           const isDemand = (commitment.commitmentType || 0) === CommitmentType.TAKER_DEMAND;
           const dailyYield = calculateYield(commitment, currentPrice);

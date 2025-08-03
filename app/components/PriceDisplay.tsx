@@ -74,26 +74,51 @@ export function PriceDisplay({
     }
   };
 
+  const getStatusDot = () => {
+    if (isStale) return 'bg-yellow-400 shadow-yellow-400/50';
+    return price.source === '1inch' 
+      ? 'bg-green-400 shadow-green-400/50' 
+      : 'bg-orange-400 shadow-orange-400/50';
+  };
+
+  const getStatusLabel = () => {
+    if (isStale) return 'Stale Data';
+    return price.source === '1inch' ? 'Live from 1inch' : 'Cached Price';
+  };
+
   return (
     <div className={`${className}`}>
       <div className="flex items-center space-x-2">
-        <span className={`font-bold text-lg ${isStale ? 'text-yellow-400' : 'text-transparent bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text'} transition-all duration-300`}>
-          💲${formatPrice(price.price)}
-        </span>
+        {/* Price with integrated status indicator */}
+        <div className="relative group">
+          <div className="flex items-center space-x-2">
+            <span className={`font-bold text-lg ${isStale ? 'text-yellow-400' : 'text-transparent bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text'} transition-all duration-300`}>
+              💲${formatPrice(price.price)}
+            </span>
+            
+            {/* Small integrated status dot */}
+            <div className={`w-2 h-2 rounded-full ${getStatusDot()} animate-pulse shadow-lg transition-all duration-300 group-hover:scale-150`}></div>
+          </div>
+          
+          {/* Hover tooltip */}
+          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+            {getStatusLabel()}
+            {lastUpdated && (
+              <div className="text-xs opacity-75">
+                {Math.round((Date.now() - lastUpdated) / 1000)}s ago
+              </div>
+            )}
+          </div>
+        </div>
         
+        {/* Legacy source display for explicit showSource requests */}
         {showSource && (
           <span className={`text-xs px-2 py-1 rounded-full ${getSourceColor()} ${
             price.source === '1inch' 
               ? 'bg-green-500/20 border border-green-500/30' 
-              : 'bg-yellow-500/20 border border-yellow-500/30'
+              : 'bg-orange-500/20 border border-orange-500/30'
           }`}>
             {price.source === '1inch' ? '🔗 1inch' : '📦 cached'}
-          </span>
-        )}
-        
-        {isStale && (
-          <span className="text-xs text-yellow-400 animate-pulse" title="Price data is stale">
-            ⚠️ stale
           </span>
         )}
       </div>
@@ -150,7 +175,7 @@ interface LivePriceBadgeProps {
 }
 
 export function LivePriceBadge({ className = "" }: LivePriceBadgeProps) {
-  const { price, isLoading, error } = useWethPrice();
+  const { price, isLoading, error, lastUpdated } = useWethPrice();
   const [pulse, setPulse] = useState(false);
 
   // Animate when price updates
@@ -164,28 +189,75 @@ export function LivePriceBadge({ className = "" }: LivePriceBadgeProps) {
 
   if (error) {
     return (
-      <div className={`inline-flex items-center px-3 py-2 rounded-full bg-gradient-to-r from-red-600/20 to-pink-600/20 border border-red-500/50 backdrop-blur-sm ${className}`}>
-        <div className="w-3 h-3 bg-red-500 rounded-full mr-2 animate-pulse shadow-lg shadow-red-500/50"></div>
-        <span className="text-red-400 text-xs font-bold">🚨 Price Error</span>
+      <div className={`relative group inline-flex items-center ${className}`}>
+        <span className="text-red-400 font-bold">💲---.--</span>
+        <div className="w-2 h-2 rounded-full bg-red-400 ml-2 animate-pulse shadow-lg shadow-red-400/50"></div>
+        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+          Price Error
+        </div>
       </div>
     );
   }
 
-  const isLive = price?.source === '1inch';
-  const bgColor = isLive 
-    ? 'bg-gradient-to-r from-green-600/30 to-emerald-600/30 border-green-400/60' 
-    : 'bg-gradient-to-r from-yellow-600/30 to-orange-600/30 border-yellow-400/60';
+  if (isLoading) {
+    return (
+      <div className={`relative group inline-flex items-center ${className}`}>
+        <span className="text-purple-400 font-bold animate-pulse">💲---.--</span>
+        <div className="w-2 h-2 rounded-full bg-purple-400 ml-2 animate-pulse shadow-lg shadow-purple-400/50"></div>
+        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+          Loading Price...
+        </div>
+      </div>
+    );
+  }
+
+  if (!price) {
+    return (
+      <div className={`relative group inline-flex items-center ${className}`}>
+        <span className="text-gray-400 font-bold">💲---.--</span>
+        <div className="w-2 h-2 rounded-full bg-gray-400 ml-2 animate-pulse shadow-lg shadow-gray-400/50"></div>
+        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+          Price Unavailable
+        </div>
+      </div>
+    );
+  }
+
+  const isLive = price.source === '1inch';
   const dotColor = isLive 
-    ? 'bg-gradient-to-r from-green-400 to-emerald-400 shadow-green-400/50' 
-    : 'bg-gradient-to-r from-yellow-400 to-orange-400 shadow-yellow-400/50';
-  const textColor = isLive ? 'text-green-300' : 'text-yellow-300';
+    ? 'bg-green-400 shadow-green-400/50' 
+    : 'bg-orange-400 shadow-orange-400/50';
+  const priceColor = isLive 
+    ? 'text-transparent bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text' 
+    : 'text-transparent bg-gradient-to-r from-orange-400 to-orange-500 bg-clip-text';
+
+  const formatPrice = (price: number) => {
+    return price.toLocaleString(undefined, { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    });
+  };
+
+  const getStatusLabel = () => {
+    return isLive ? 'Live from 1inch' : 'Cached Price';
+  };
 
   return (
-    <div className={`inline-flex items-center px-3 py-2 rounded-full ${bgColor} backdrop-blur-sm border shadow-lg ${className}`}>
-      <div className={`w-3 h-3 ${dotColor} rounded-full mr-2 shadow-lg ${pulse ? 'animate-ping' : 'animate-pulse'}`}></div>
-      <span className={`text-xs font-bold ${textColor}`}>
-        {isLoading ? '⏳ Loading...' : isLive ? '🔴 LIVE' : '📦 CACHED'}
+    <div className={`relative group inline-flex items-center ${className}`}>
+      <span className={`font-bold ${priceColor} transition-all duration-300`}>
+        💲{formatPrice(price.price)}
       </span>
+      <div className={`w-2 h-2 rounded-full ${dotColor} ml-2 shadow-lg transition-all duration-300 group-hover:scale-150 ${pulse ? 'animate-ping' : 'animate-pulse'}`}></div>
+      
+      {/* Hover tooltip */}
+      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+        {getStatusLabel()}
+        {lastUpdated && (
+          <div className="text-xs opacity-75">
+            {Math.round((Date.now() - lastUpdated) / 1000)}s ago
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseEther, parseUnits, Address } from 'viem';
 import { SignedLPCommitment, LPCommitment } from '../../lib/eip712/verification';
+import { useWethPrice } from '../../hooks/use-prices';
 
 interface LPCommitmentFormProps {
   onSuccess?: (commitmentId: string) => void;
@@ -22,7 +23,8 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Mock current price - in real app this would come from 1inch API
-  const currentPrice = 3836.50;
+  const { price: wethPrice } = useWethPrice();
+  const currentPrice = wethPrice?.price || 3836.50;
   const amountNum = parseFloat(amount) || 0;
   const dailyPremiumNum = parseFloat(dailyPremium) || 0;
   const minLockNum = parseInt(minLockDays) || 1;

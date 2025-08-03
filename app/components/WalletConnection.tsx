@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import {
   ConnectWallet,
@@ -38,27 +39,109 @@ export function WalletConnection() {
   const { connectors, connect } = useConnect();
   const { disconnect } = useDisconnect();
   const [showWalletOptions, setShowWalletOptions] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, right: 0 });
+  const [mounted, setMounted] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const isMiniApp = useIsMiniApp();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (showWalletOptions && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setDropdownPosition({
+        top: rect.bottom + 8,
+        right: window.innerWidth - rect.right
+      });
+    }
+  }, [showWalletOptions]);
 
   if (isConnected && address) {
     return (
-      <Wallet>
-        <div className="flex items-center gap-4">
-          <Identity
-            address={address}
-            schemaId="0xf8b05c79f090979bf4a80270aba232dff11a10d9ca55c4f88de95317970f0de9"
-          >
-            <Avatar />
-            <Name />
-            <Address />
-            <EthBalance />
-          </Identity>
+      <div className="relative z-50">
+        <button
+          ref={buttonRef}
+          onClick={() => setShowWalletOptions(!showWalletOptions)}
+          className="flex items-center gap-3 px-4 py-2 bg-gradient-to-r from-blue-600/30 to-purple-600/30 backdrop-blur-sm rounded-xl border border-blue-500/20 hover:border-blue-400/40 transition-all duration-300 cursor-pointer group"
+        >
+          <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-sm">
+            {address.slice(2, 4).toUpperCase()}
+          </div>
+          <div className="flex flex-col text-left">
+            <div className="text-white text-sm font-medium">
+              {address.slice(0, 6)}...{address.slice(-4)}
+            </div>
+            <div className="text-blue-200 text-xs">Connected</div>
+          </div>
           
-          <WalletDropdown>
-            <WalletDropdownDisconnect />
-          </WalletDropdown>
-        </div>
-      </Wallet>
+          {/* Dropdown indicator */}
+          <svg className={`w-4 h-4 text-blue-300 group-hover:text-white transition-all duration-200 ${showWalletOptions ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        
+        {/* Portal-based dropdown menu */}
+        {showWalletOptions && mounted && typeof window !== 'undefined' && 
+          createPortal(
+            <>
+              {/* Backdrop to close dropdown */}
+              <div 
+                className="fixed inset-0 z-[999998]" 
+                onClick={() => setShowWalletOptions(false)}
+              />
+              
+              {/* Dropdown menu rendered at body level */}
+              <div 
+                className="fixed w-64 bg-gray-900/95 backdrop-blur-lg rounded-xl border border-gray-700/50 shadow-xl z-[999999]"
+                style={{
+                  top: `${dropdownPosition.top}px`,
+                  right: `${dropdownPosition.right}px`
+                }}
+              >
+                <div className="p-4 border-b border-gray-700/50">
+                  <div className="text-sm text-gray-300 mb-2">Connected Wallet</div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-bold">
+                      {address.slice(2, 4).toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="text-white font-medium">{address.slice(0, 8)}...{address.slice(-6)}</div>
+                      <div className="text-emerald-400 text-sm">Connected</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-2">
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      disconnect();
+                      setShowWalletOptions(false);
+                    }}
+                    className="w-full px-3 py-2 text-left text-red-400 hover:bg-red-500/10 rounded-lg transition-colors duration-200 text-sm flex items-center gap-2 cursor-pointer hover:scale-[1.02] transform"
+                  >
+                    🚪 Disconnect Wallet
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(address);
+                      setShowWalletOptions(false);
+                    }}
+                    className="w-full px-3 py-2 text-left text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors duration-200 text-sm flex items-center gap-2 mt-1 cursor-pointer hover:scale-[1.02] transform"
+                  >
+                    📋 Copy Address
+                  </button>
+                </div>
+              </div>
+            </>,
+            document.body
+          )
+        }
+      </div>
     );
   }
 

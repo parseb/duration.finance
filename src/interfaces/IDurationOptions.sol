@@ -43,9 +43,9 @@ interface IDurationOptions {
 
     struct SettlementParams {
         uint8 method;               // Settlement method (0=LimitOrder, 1=Unoswap, 2=Generic)
-        bytes routingData;          // Encoded routing parameters
-        uint256 minReturn;          // Minimum return expected
-        uint256 deadline;           // Settlement deadline
+        bytes routingData;          // Encoded routing parameters for 1inch
+        uint256 minReturn;          // Frontend-calculated minimum expected settlement amount (CRITICAL for manipulation protection)
+        uint256 deadline;           // Settlement deadline timestamp
     }
 
     // Events - Duration-Centric Model
@@ -59,8 +59,8 @@ interface IDurationOptions {
     event ExcessSwept(address indexed asset, address indexed to, uint256 amount);
     event ETHSwept(address indexed to, uint256 amount);
     event ProtocolFeeUpdated(uint256 newFee);
-    // CommitmentFeeUpdated event removed - fees handled at API layer
     event PositionLimitsUpdated(uint256 minSize, uint256 maxSize);
+    event OneInchOraclesUpdated(address indexed spotPriceAggregator, address indexed offchainOracle);
 
     // Core Functions - Duration-Centric
     function createCommitment(OptionCommitment calldata commitment) external;
@@ -87,7 +87,6 @@ interface IDurationOptions {
 
     // Admin Functions
     function setSafetyMargin(uint256 newMargin) external;
-    function setSettlementRouter(address router) external;
     // setCommitmentFee function removed - fees handled at API layer
     function setProtocolFee(uint256 newFee) external;
     function sweepExcess(address asset) external;

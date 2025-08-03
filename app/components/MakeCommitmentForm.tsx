@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAccount, useSignTypedData, useChainId } from 'wagmi';
 import { parseEther, parseUnits } from 'viem';
 import { SignedOptionCommitment, OptionCommitment, CommitmentType, OptionType, DURATION_DOMAIN, COMMITMENT_TYPES } from '../../lib/eip712/verification';
+import { useWethPrice } from '../../hooks/use-prices';
 
 interface MakeCommitmentFormProps {
   onSuccess?: (commitmentId: string) => void;
@@ -13,6 +14,7 @@ interface MakeCommitmentFormProps {
 export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormProps) {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { price: wethPrice, isLoading: isPriceLoading, error: priceError } = useWethPrice();
   const { signTypedData, isLoading: isSigning, data: signature, error: signError } = useSignTypedData();
   
   // Helper function to validate and normalize address
@@ -34,8 +36,8 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingCommitment, setPendingCommitment] = useState<OptionCommitment | null>(null);
   
-  // Mock current price - in real app this would come from 1inch API
-  const currentPrice = 3836.50;
+  // Get real-time WETH price from our pricing API
+  const currentPrice = wethPrice?.price || 3836.50; // Fallback to last known price
   const amountNum = parseFloat(amount) || 0;
   const premiumNum = parseFloat(premiumAmount) || 0;
   const [minDuration, maxDuration] = durationRange;
@@ -227,8 +229,8 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="bg-gradient-to-br from-purple-800/50 to-blue-800/50 backdrop-blur-lg rounded-2xl p-8 border border-purple-500/20 shadow-2xl">
-        <h2 className="text-2xl font-bold mb-4 bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent flex items-center">
+      <div className="bg-gradient-to-br from-purple-800/50 via-blue-800/50 to-orange-800/30 backdrop-blur-lg rounded-2xl p-8 border border-purple-500/20 shadow-2xl shadow-orange-500/5">
+        <h2 className="text-2xl font-bold mb-4 bg-gradient-to-r from-orange-400 to-orange-600 bg-clip-text text-transparent flex items-center">
           ⚡ Create Commitment
         </h2>
         <p className="text-purple-200 mb-8 bg-purple-500/10 p-4 rounded-xl border border-purple-500/20">
@@ -243,18 +245,59 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
         </p>
         
         {/* Current Price Display */}
-        <div className="bg-gradient-to-r from-emerald-600/30 to-green-600/30 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-emerald-500/30 shadow-lg hover:shadow-xl transition-all duration-300">
+        <div className={`bg-gradient-to-r backdrop-blur-sm rounded-2xl p-6 mb-6 border shadow-lg hover:shadow-xl transition-all duration-300 ${
+          isPriceLoading 
+            ? 'from-purple-600/30 to-blue-600/30 border-purple-500/30'
+            : priceError 
+            ? 'from-red-600/30 to-pink-600/30 border-red-500/30'
+            : wethPrice?.source === '1inch'
+            ? 'from-emerald-600/30 to-green-600/30 border-emerald-500/30'
+            : 'from-orange-600/30 to-yellow-600/30 border-orange-500/30'
+        }`}>
           <div className="flex justify-between items-center">
             <div>
-              <div className="text-emerald-300 text-sm font-medium flex items-center">
-                ⚡ Current WETH Price
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`text-sm font-medium ${
+                  isPriceLoading ? 'text-purple-300' : 
+                  priceError ? 'text-red-300' :
+                  wethPrice?.source === '1inch' ? 'text-emerald-300' : 'text-orange-300'
+                }`}>
+                  ⚡ Current WETH Price
+                </span>
+                {isPriceLoading && (
+                  <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
+                )}
+                {!isPriceLoading && wethPrice && (
+                  <div className={`w-2 h-2 rounded-full animate-pulse ${
+                    wethPrice.source === '1inch' ? 'bg-green-400' : 'bg-orange-400'
+                  }`}></div>
+                )}
               </div>
-              <div className="text-white text-2xl font-bold bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text text-transparent">
-                ${currentPrice.toLocaleString()}
+              <div className={`text-2xl font-bold bg-gradient-to-r bg-clip-text text-transparent ${
+                isPriceLoading ? 'from-purple-400 to-blue-400' :
+                priceError ? 'from-red-400 to-pink-400' :
+                wethPrice?.source === '1inch' ? 'from-green-400 to-emerald-400' : 'from-orange-400 to-yellow-400'
+              }`}>
+                {isPriceLoading ? 'Loading...' : 
+                 priceError ? 'Price Error' :
+                 `$${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
               </div>
+              {!isPriceLoading && wethPrice && (
+                <div className={`text-xs mt-1 ${
+                  wethPrice.source === '1inch' ? 'text-emerald-400' : 'text-orange-400'
+                }`}>
+                  {wethPrice.source === '1inch' ? '🔴 Live from 1inch' : '📦 Cached price'}
+                </div>
+              )}
             </div>
             <div className="text-right">
-              <div className="text-emerald-300 text-sm font-medium">🎯 Strike Price</div>
+              <div className={`text-sm font-medium mb-2 ${
+                isPriceLoading ? 'text-purple-300' : 
+                priceError ? 'text-red-300' :
+                wethPrice?.source === '1inch' ? 'text-emerald-300' : 'text-orange-300'
+              }`}>
+                🎯 Strike Price
+              </div>
               <div className="text-yellow-400 font-bold bg-yellow-500/20 px-3 py-2 rounded-xl border border-yellow-400/30">
                 Market Price @ Taking
               </div>
@@ -317,8 +360,8 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
                   onClick={() => setCommitmentType('OFFER')}
                   className={`flex-1 py-3 px-4 rounded-lg text-sm font-bold transition-all duration-300 transform hover:scale-105 ${
                     commitmentType === 'OFFER'
-                      ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg shadow-yellow-500/30'
-                      : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-yellow-500/20 hover:to-orange-500/20'
+                      ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/30'
+                      : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-orange-500/20 hover:to-orange-600/20'
                   }`}
                 >
                   🎯 OFFER
@@ -467,7 +510,7 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
         <button 
           type="submit"
           disabled={!isValid || isSubmitting || isSigning}
-          className="w-full mt-8 py-4 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 hover:shadow-lg disabled:transform-none disabled:shadow-none shadow-lg shadow-yellow-500/30"
+          className="w-full mt-8 py-4 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 hover:shadow-lg disabled:transform-none disabled:shadow-none shadow-lg shadow-orange-500/30"
         >
           <div className="flex items-center justify-center space-x-2">
             <span className="text-xl">

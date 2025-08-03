@@ -31,7 +31,7 @@ contract DurationOptionsTest is Test {
     function setUp() public {
         // Deploy contracts
         settlement = new OneInchSettlementRouter(admin);
-        options = new DurationOptions(address(settlement));
+        options = new DurationOptions();
 
         // Setup test tokens and balances
         vm.deal(alice, 100 ether);

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { SignedLPCommitment } from '../../lib/eip712/verification';
 import { formatEther, formatUnits } from 'viem';
+import { useWethPrice } from '../../hooks/use-prices';
 
 interface LPCommitmentListProps {
   showOnlyMyCommitments?: boolean;
@@ -12,6 +13,7 @@ interface LPCommitmentListProps {
 
 export function LPCommitmentList({ showOnlyMyCommitments = false, onCancel }: LPCommitmentListProps) {
   const { address } = useAccount();
+  const { price: wethPrice } = useWethPrice();
   const [commitments, setCommitments] = useState<SignedLPCommitment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -178,7 +180,7 @@ export function LPCommitmentList({ showOnlyMyCommitments = false, onCancel }: LP
         {commitments.map((commitment) => {
           const commitmentId = hashCommitment(commitment);
           const expired = isExpired(commitment.expiry);
-          const currentPrice = 3836.50; // Mock price
+          const currentPrice = wethPrice?.price || 3836.50; // Real-time price with fallback
           const dailyYield = calculateYield(commitment, currentPrice);
           const annualizedYield = dailyYield * 365;
           const isMyCommitment = address && commitment.lp.toLowerCase() === address.toLowerCase();

@@ -33,7 +33,7 @@ contract OneInchIntegrationTest is Test {
         settlementRouter = new OneInchSettlementRouter(admin);
         
         // Deploy main options contract
-        options = new DurationOptions(address(settlementRouter));
+        options = new DurationOptions();
         
         vm.stopPrank();
         

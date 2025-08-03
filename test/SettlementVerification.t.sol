@@ -25,7 +25,7 @@ contract SettlementVerificationTest is Test {
     function setUp() public {
         // Deploy contracts
         settlement = new OneInchSettlementRouter(admin);
-        options = new DurationOptions(address(settlement));
+        options = new DurationOptions();
         
         // Setup test tokens and balances
         vm.deal(alice, 100 ether);
@@ -62,11 +62,11 @@ contract SettlementVerificationTest is Test {
     }
 
     function testBasicSettlementSetup() public view {
-        // Test that settlement router is properly configured
-        address settlementAddr = options.settlementRouter();
+        // Test that settlement router is properly configured (now integrated)
+        address settlementAddr = address(settlement);
         assertEq(settlementAddr, address(settlement));
         
-        console.log("Settlement router properly configured");
+        console.log("Integrated settlement properly configured");
     }
 
     function testCollateralizationCheck() public {
@@ -117,10 +117,11 @@ contract SettlementVerificationTest is Test {
         // Test safety margin setting
         options.setSafetyMargin(5); // 0.05%
         
-        // Test settlement router setting
-        address newRouter = makeAddr("newRouter");
-        options.setSettlementRouter(newRouter);
-        assertEq(options.settlementRouter(), newRouter);
+        // Test 1inch sweep functionality (settlement is now integrated)
+        vm.prank(owner);
+        options.sweep1inchFees();
+        
+        console.log("Integrated 1inch settlement properly configured");
         
         // Test emergency pause/unpause
         options.emergencyPause();

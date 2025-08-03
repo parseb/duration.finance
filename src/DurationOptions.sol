@@ -10,52 +10,71 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {IDurationOptions} from "./interfaces/IDurationOptions.sol";
-import {ISettlementRouter} from "./interfaces/I1inch.sol";
+
+/**
+ * @title I1inchOracle
+ * @notice Interface for 1inch price oracle (designed for off-chain usage)
+ * @dev WARNING: 1inch oracles should NOT be used on-chain to avoid price manipulation
+ */
+interface I1inchOracle {
+    /**
+     * @notice Get exchange rate from oracle
+     * @param srcToken Source token address  
+     * @param dstToken Destination token address
+     * @param useWrappers Whether to use token wrappers
+     * @return rate Exchange rate with decimals
+     */
+    function getRate(address srcToken, address dstToken, bool useWrappers) external view returns (uint256 rate);
+    
+    /**
+     * @notice Get rate to ETH with amount
+     * @param srcToken Source token address
+     * @param useSrcWrappers Whether to use source token wrappers
+     */
+    function getRateToEth(address srcToken, bool useSrcWrappers) external view returns (uint256 weightedRate);
+}
 
 /**
  * @title DurationOptions
- * @author Duration.Finance  
- * @notice Duration-centric options protocol with 1inch settlement integration
- * @dev Complete rewrite focused on daily premium rates and duration flexibility
+ * @author Duration.Finance
+ * @notice Duration-centric options protocol with integrated 1inch settlement
+ * @dev Fully collateralized options with daily premium rates and flexible durations
  */
 contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable, EIP712 {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
 
-    // EIP712 type hash for unified commitments
     bytes32 public constant OPTION_COMMITMENT_TYPEHASH = keccak256(
         "OptionCommitment(address creator,address asset,uint256 amount,uint256 premiumAmount,uint256 minDurationDays,uint256 maxDurationDays,uint8 optionType,uint8 commitmentType,uint256 expiry,uint256 nonce)"
     );
     
-    // Legacy LP commitment type hash for backward compatibility
     bytes32 public constant LP_COMMITMENT_TYPEHASH = keccak256(
         "LPCommitment(address lp,address asset,uint256 amount,uint256 dailyPremiumUsdc,uint256 minLockDays,uint256 maxDurationDays,uint8 optionType,uint256 expiry,uint256 nonce)"
     );
 
-    // Configurable position limits (can be updated by owner)
-    uint256 public minOptionSize = 0.001 ether; // 0.001 WETH minimum (configurable)
-    uint256 public maxOptionSize = 1 ether; // 1 WETH maximum (configurable)
+    uint256 public minOptionSize = 0.001 ether;
+    uint256 public maxOptionSize = 1 ether;
     uint256 public constant MIN_DURATION_DAYS = 1;
     uint256 public constant MAX_DURATION_DAYS = 365;
     
-    address public constant WETH = 0x4200000000000000000000000000000000000006; // Base WETH
-    address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // Base USDC
+    address public constant WETH = 0x4200000000000000000000000000000000000006;
+    address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address public constant ONEINCH_UNOSWAP = 0x111111125421cA6dc452d289314280a0f8842A65;
+    
+    // 1inch Oracle contracts (official Base network deployments)
+    address public oneInchSpotPriceAggregator = 0x00000000000D6FFc74A8feb35aF5827bf57f6786; // Official Base OffchainOracle
+    address public oneInchOffchainOracle = 0xc197Ab9d47206dAf739a47AC75D0833fD2b0f87F; // Official Base MultiWrapper
 
-    // Protocol state
     uint256 public optionCounter;
-    uint256 public protocolFee = 100; // 1% = 100 basis points
-    uint256 public safetyMargin = 1; // 0.01% = 1 basis point
-    address public settlementRouter;
+    uint256 public protocolFee = 100;
+    uint256 public safetyMargin = 1;
 
-    // Storage
     mapping(uint256 => ActiveOption) public activeOptions;
     mapping(address => uint256) public nonces;
     mapping(address => bool) public allowedAssets;
-    mapping(address => uint256) public totalLocked; // Total amount locked per asset
+    mapping(address => uint256) public totalLocked;
+    mapping(uint256 => bool) private _settlingOptions;
 
-    // Events (inherited from interface, no need to redeclare)
-
-    // Errors
     error InvalidCommitment();
     error CommitmentExpired();
     error CommitmentNotFound();
@@ -69,18 +88,30 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
     error SettlementFailed();
     error InsufficientAllowance();
     error InvalidSignature();
+    error SettlementInProgress();
 
-    constructor(address _settlementRouter) 
-        Ownable(msg.sender) 
-        EIP712("Duration.Finance", "1") 
-    {
-        settlementRouter = _settlementRouter;
+    constructor() Ownable(msg.sender) EIP712("Duration.Finance", "1") {
         allowedAssets[WETH] = true;
     }
 
-    /// @notice Verify unified commitment signature and validate structure
+    /**
+     * @notice Prevents reentrancy during settlement operations
+     * @param optionId ID of option being settled
+     */
+    modifier noSettlementReentrancy(uint256 optionId) {
+        if (_settlingOptions[optionId]) revert SettlementInProgress();
+        _settlingOptions[optionId] = true;
+        _;
+        _settlingOptions[optionId] = false;
+    }
+
+
+    /**
+     * @notice Verify unified commitment signature and validate structure
+     * @param commitment Option commitment to verify
+     * @return valid True if commitment is valid and properly signed
+     */
     function _verifyCommitment(OptionCommitment calldata commitment) internal view returns (bool) {
-        // Validate basic commitment structure
         if (commitment.expiry <= block.timestamp) return false;
         if (commitment.amount < minOptionSize || commitment.amount > maxOptionSize) return false;
         if (!allowedAssets[commitment.asset]) return false;
@@ -89,7 +120,6 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         if (commitment.premiumAmount == 0) return false;
         if (commitment.nonce != nonces[commitment.creator]) return false;
 
-        // Create EIP712 hash for unified commitment
         bytes32 structHash = keccak256(abi.encode(
             OPTION_COMMITMENT_TYPEHASH,
             commitment.creator,
@@ -110,12 +140,13 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         return signer == commitment.creator && signer != address(0);
     }
     
-    /// @notice Legacy LP commitment verification for backward compatibility
+    /**
+     * @notice Legacy LP commitment verification for backward compatibility
+     * @param commitment Option commitment to verify as legacy LP commitment
+     * @return valid True if legacy commitment is valid and properly signed
+     */
     function _verifyLPCommitment(OptionCommitment calldata commitment) internal view returns (bool) {
-        // Convert unified commitment to legacy format for verification
         if (commitment.commitmentType != CommitmentType.LP_OFFER) return false;
-        
-        // Validate basic commitment structure
         if (commitment.expiry <= block.timestamp) return false;
         if (commitment.amount < minOptionSize || commitment.amount > maxOptionSize) return false;
         if (!allowedAssets[commitment.asset]) return false;
@@ -124,14 +155,13 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         if (commitment.premiumAmount == 0) return false;
         if (commitment.nonce != nonces[commitment.creator]) return false;
 
-        // For legacy compatibility, create LP commitment hash
         bytes32 structHash = keccak256(abi.encode(
             LP_COMMITMENT_TYPEHASH,
-            commitment.creator, // lp field
+            commitment.creator,
             commitment.asset,
             commitment.amount,
-            commitment.premiumAmount, // dailyPremiumUsdc field
-            commitment.minDurationDays, // minLockDays field
+            commitment.premiumAmount,
+            commitment.minDurationDays,
             commitment.maxDurationDays,
             uint8(commitment.optionType),
             commitment.expiry,
@@ -156,7 +186,13 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         return usdc.balanceOf(user) >= amount && usdc.allowance(user, address(this)) >= amount;
     }
 
-    /// @notice Take commitment with specified duration (supports both LP offers and Taker demands)
+    /**
+     * @notice Take commitment and create active option
+     * @param commitment Signed commitment to take
+     * @param durationDays Duration in days for the option
+     * @param settlementParams Settlement parameters (unused in current implementation)
+     * @return optionId ID of newly created option
+     */
     function takeCommitment(
         OptionCommitment calldata commitment,
         uint256 durationDays,
@@ -168,22 +204,19 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
     function _takeCommitmentInternal(
         OptionCommitment calldata commitment,
         uint256 durationDays,
-        SettlementParams calldata settlementParams
+        SettlementParams calldata /* settlementParams */
     ) internal returns (uint256 optionId) {
-        // Verify signature and commitment validity (try unified first, then legacy)
         bool isValidUnified = _verifyCommitment(commitment);
         bool isValidLegacy = !isValidUnified && _verifyLPCommitment(commitment);
         
         if (!isValidUnified && !isValidLegacy) revert InvalidSignature();
         
-        // Check duration is within acceptable range
         if (durationDays < commitment.minDurationDays || durationDays > commitment.maxDurationDays) {
             revert InvalidDuration();
         }
 
         (address lp, address taker, uint256 totalPremium) = _processCommitmentType(commitment, durationDays, isValidLegacy);
         
-        // Update nonce and create option
         return _createActiveOption(commitment, durationDays, lp, taker, totalPremium);
     }
     
@@ -192,35 +225,28 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         uint256 durationDays,
         bool isValidLegacy
     ) internal view returns (address lp, address taker, uint256 totalPremium) {
-        // Handle based on commitment type
         if (commitment.commitmentType == CommitmentType.LP_OFFER || isValidLegacy) {
-            // LP Offer: LP provides collateral, Taker pays premium based on daily rate * duration
             lp = commitment.creator;
             taker = msg.sender;
             totalPremium = commitment.premiumAmount * durationDays;
             
-            // Check LP has assets and allowance
             if (!_checkUserAssets(lp, commitment.asset, commitment.amount)) {
                 revert InsufficientAllowance();
             }
             
-            // Check taker has USDC for premium
             if (!_checkUserUSDC(taker, totalPremium)) {
                 revert InsufficientAllowance();
             }
             
         } else if (commitment.commitmentType == CommitmentType.TAKER_DEMAND) {
-            // Taker Demand: Taker (creator) wants option, LP (msg.sender) provides collateral
             lp = msg.sender;
             taker = commitment.creator;
-            totalPremium = commitment.premiumAmount; // Fixed total premium
+            totalPremium = commitment.premiumAmount;
             
-            // Check LP has assets and allowance
             if (!_checkUserAssets(lp, commitment.asset, commitment.amount)) {
                 revert InsufficientAllowance();
             }
             
-            // Check taker has USDC for premium
             if (!_checkUserUSDC(taker, totalPremium)) {
                 revert InsufficientAllowance();
             }
@@ -322,38 +348,45 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         annualizedYield = dailyYield * 365;
     }
 
-    /// @notice Exercise an option when profitable
+    /**
+     * @notice Exercise an option when profitable with settlement validation
+     * @param optionId ID of option to exercise
+     * @param params Settlement parameters including expected minimum return for validation
+     * @dev params.minReturn should represent frontend-calculated expected settlement amount
+     *      This prevents price manipulation by validating actual swap output against expectations
+     */
     function exerciseOption(
         uint256 optionId,
         SettlementParams calldata params
-    ) external override nonReentrant whenNotPaused {
+    ) external override nonReentrant whenNotPaused noSettlementReentrancy(optionId) {
         ActiveOption storage option = activeOptions[optionId];
         if (option.taker != msg.sender) revert UnauthorizedCaller();
-        if (!isExercisable(optionId)) revert OptionNotExercisable();
         if (params.deadline < block.timestamp) revert SettlementFailed();
-
+        if (params.minReturn == 0) revert SettlementFailed(); // Frontend must provide expected return
+        
+        // Validate profitability using current on-chain price (subject to manipulation)
         uint256 currentPrice = getCurrentPrice(option.asset);
-        uint256 profit = 0;
+        if (!_isProfitable(option, currentPrice)) revert OptionNotExercisable();
 
-        if (option.optionType == OptionType.CALL && currentPrice > option.strikePrice) {
-            profit = (currentPrice - option.strikePrice) * option.amount / 1e18;
-        } else if (option.optionType == OptionType.PUT && currentPrice < option.strikePrice) {
-            profit = (option.strikePrice - currentPrice) * option.amount / 1e18;
-        }
-
-        if (profit == 0) revert OptionNotExercisable();
+        // Calculate expected profit for validation
+        uint256 expectedProfit = _calculateExpectedProfit(option, currentPrice);
+        uint256 protocolFeeAmount = (expectedProfit * protocolFee) / 10000;
+        uint256 expectedNetProfit = expectedProfit - protocolFeeAmount;
+        
+        // Perform settlement with validation against frontend expectations
+        uint256 actualSettlementReturn = _performValidatedSettlement(option, params, expectedNetProfit);
 
         option.state = OptionState.EXERCISED;
         totalLocked[option.asset] -= option.amount;
 
-        uint256 protocolFeeAmount = (profit * protocolFee) / 10000;
-        uint256 netProfit = profit - protocolFeeAmount;
-        _performSettlement(option, params, netProfit);
-
-        emit OptionExercised(optionId, netProfit, protocolFeeAmount);
+        emit OptionExercised(optionId, actualSettlementReturn, protocolFeeAmount);
     }
 
-    /// @notice Liquidate expired option
+    /**
+     * @notice Liquidate expired option
+     * @param optionId ID of expired option to liquidate
+     * @param maxPriceMovement Maximum price movement parameter (unused in current implementation)
+     */
     function liquidateExpiredOption(uint256 optionId, uint256 maxPriceMovement) 
         external override nonReentrant 
     {
@@ -378,15 +411,31 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
             return currentPrice < option.strikePrice;
         }
     }
+    
+    /**
+     * @notice Calculate expected profit from option exercise
+     * @param option Option details
+     * @param currentPrice Current asset price
+     * @return expectedProfit Expected profit in USDC (6 decimals)
+     */
+    function _calculateExpectedProfit(ActiveOption memory option, uint256 currentPrice) internal pure returns (uint256 expectedProfit) {
+        if (option.optionType == OptionType.CALL && currentPrice > option.strikePrice) {
+            // CALL profit: (current - strike) * amount, converted to USDC decimals
+            expectedProfit = ((currentPrice - option.strikePrice) * option.amount) / 1e30; // 18+18-6=30
+        } else if (option.optionType == OptionType.PUT && currentPrice < option.strikePrice) {
+            // PUT profit: (strike - current) * amount, converted to USDC decimals  
+            expectedProfit = ((option.strikePrice - currentPrice) * option.amount) / 1e30; // 18+18-6=30
+        } else {
+            expectedProfit = 0;
+        }
+    }
 
     function _liquidateProfitableWithSimulation(
         uint256 optionId,
         ActiveOption storage option,
         uint256 initialPrice,
-        uint256 maxPriceMovement
+        uint256 /* maxPriceMovement */
     ) internal {
-        // Simulate settlement and verify price stability
-        
         option.state = OptionState.EXERCISED;
         totalLocked[option.asset] -= option.amount;
         
@@ -404,15 +453,20 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         emit OptionExpiredUnprofitable(optionId, getCurrentPrice(option.asset), option.strikePrice);
     }
 
-    function _performSettlement(
+    /**
+     * @notice Perform validated settlement with price manipulation protection
+     * @param option Option details
+     * @param params Settlement parameters with frontend-calculated minReturn
+     * @param expectedProfit Expected profit calculated from on-chain price
+     * @return actualReturn Actual settlement return amount
+     * @dev Validates settlement output against frontend expectations to prevent manipulation
+     */
+    function _performValidatedSettlement(
         ActiveOption memory option,
         SettlementParams calldata params,
-        uint256 expectedReturn
-    ) internal {
-        // Get settlement quote from the router
-        ISettlementRouter router = ISettlementRouter(settlementRouter);
-        
-        // Determine settlement direction based on option type and profitability
+        uint256 expectedProfit
+    ) internal returns (uint256 actualReturn) {
+        // Determine settlement direction based on option type
         address tokenIn;
         address tokenOut;
         uint256 amountIn;
@@ -426,82 +480,215 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
             // For profitable PUT: Buy underlying asset with USDC for taker
             tokenIn = USDC;
             tokenOut = option.asset;
-            // Calculate USDC needed to buy the asset amount
+            // Calculate USDC needed based on current price
             uint256 currentPrice = getCurrentPrice(option.asset);
             amountIn = (option.amount * currentPrice) / 1e18;
         }
         
-        // Get quote from 1inch via our settlement router
-        (uint256 quoteAmountOut, ISettlementRouter.SettlementMethod method, bytes memory routingData) = 
-            router.getSettlementQuote(tokenIn, tokenOut, amountIn);
-        
-        // Apply safety margin to protect against slippage
-        uint256 minAmountOut = (quoteAmountOut * (10000 - safetyMargin)) / 10000;
-        
         // Verify we have enough tokens for the swap
         require(IERC20(tokenIn).balanceOf(address(this)) >= amountIn, "Insufficient balance");
         
-        // Approve settlement router to spend our tokens
-        IERC20(tokenIn).forceApprove(settlementRouter, amountIn);
+        // Execute settlement directly through 1inch
+        uint256 amountOut = _execute1inchSwap(tokenIn, tokenOut, amountIn, params.minReturn, params.routingData);
         
-        // Execute settlement through 1inch
-        ISettlementRouter.SettlementResult memory result = router.executeSettlement(
-            method,
-            tokenIn,
-            tokenOut,
-            amountIn,
-            minAmountOut,
-            routingData
-        );
+        // CRITICAL: Validate settlement output against frontend expectations
+        _validateSettlementEconomics(option, amountOut, expectedProfit, params.minReturn);
         
         // Distribute proceeds
-        _distributeSettlementProceeds(option, tokenOut, result.amountOut, expectedReturn);
+        actualReturn = _distributeValidatedProceeds(option, tokenOut, amountOut, expectedProfit);
     }
     
-    function _distributeSettlementProceeds(
+    /**
+     * @notice Validate settlement economics against price manipulation
+     * @param option Option details  
+     * @param actualSettlementOut Actual tokens received from 1inch swap
+     * @param expectedProfit Expected profit based on on-chain price
+     * @param frontendMinReturn Frontend-calculated minimum expected return
+     * @dev Reverts if settlement output indicates price manipulation
+     */
+    function _validateSettlementEconomics(
         ActiveOption memory option,
-        address tokenOut,
-        uint256 totalAmountOut,
-        uint256 expectedTakerReturn
-    ) internal {
-        // Calculate protocol fee on the settlement profit
-        uint256 settlementProfit = totalAmountOut > expectedTakerReturn ? 
-            totalAmountOut - expectedTakerReturn : 0;
-        uint256 protocolFeeAmount = (settlementProfit * protocolFee) / 10000;
-        
-        // Transfer expected return to taker
-        if (expectedTakerReturn > 0) {
-            IERC20(tokenOut).safeTransfer(option.taker, expectedTakerReturn);
+        uint256 actualSettlementOut,
+        uint256 expectedProfit,
+        uint256 frontendMinReturn
+    ) internal view {
+        // 1. Validate against frontend expectations (prevents manipulation)
+        if (actualSettlementOut < frontendMinReturn) {
+            revert SettlementFailed(); // Settlement worse than frontend calculated
         }
         
-        // Calculate LP's share (remaining amount after taker gets their profit)
-        uint256 lpShare = totalAmountOut - expectedTakerReturn - protocolFeeAmount;
-        if (lpShare > 0) {
-            IERC20(tokenOut).safeTransfer(option.lp, lpShare); 
+        // 2. Validate against on-chain expectations with tolerance
+        uint256 maxAllowedDeviation = (expectedProfit * safetyMargin) / 10000;
+        uint256 minAcceptableProfit = expectedProfit > maxAllowedDeviation ? 
+            expectedProfit - maxAllowedDeviation : 0;
+        
+        // For CALL: settlement out should be USDC (profit)
+        // For PUT: settlement out should be asset amount
+        uint256 settlementProfit;
+        if (option.optionType == OptionType.CALL) {
+            // CALL: direct USDC output is the profit
+            settlementProfit = actualSettlementOut;
+        } else {
+            // PUT: convert asset amount back to USDC value for comparison
+            uint256 currentPrice = getCurrentPrice(option.asset);
+            settlementProfit = (actualSettlementOut * currentPrice) / 1e18;
         }
         
-        // Protocol fees stay in contract - will be swept by owner later
-        // No immediate transfer needed as sweepProtocolFees() handles this
+        if (settlementProfit < minAcceptableProfit) {
+            revert SettlementFailed(); // Settlement profit too low, possible manipulation
+        }
+        
+        // 3. Sanity check: settlement shouldn't be impossibly high
+        uint256 maxReasonableProfit = expectedProfit + maxAllowedDeviation;
+        if (settlementProfit > maxReasonableProfit) {
+            revert SettlementFailed(); // Settlement profit unreasonably high
+        }
     }
-
-    // View functions
-    function getCurrentPrice(address asset) public view override returns (uint256) {
-        // Get current market price from settlement router
-        if (settlementRouter != address(0)) {
-            try ISettlementRouter(settlementRouter).getSettlementQuote(asset, USDC, 1e18) 
-                returns (uint256 usdcAmount, ISettlementRouter.SettlementMethod, bytes memory) {
-                // Convert USDC (6 decimals) to standard 18 decimal price format
-                return usdcAmount * 1e12;
+    
+    /**
+     * @notice Get settlement quote from 1inch oracle with fallback pricing
+     * @param tokenIn Input token address
+     * @param tokenOut Output token address
+     * @param amountIn Amount of input tokens
+     * @return amountOut Expected output amount based on current DEX rates
+     * @dev IMPORTANT: 1inch oracles are designed for OFF-CHAIN usage only
+     *      Production deployment should use alternative on-chain price feeds
+     *      Current implementation includes fallback pricing for development
+     */
+    function _get1inchQuote(
+        address tokenIn,
+        address tokenOut, 
+        uint256 amountIn
+    ) internal view returns (uint256 amountOut) {
+        // Check if we're on Base network with oracle contracts deployed
+        if (block.chainid == 8453 && oneInchSpotPriceAggregator.code.length > 0) {
+            try I1inchOracle(oneInchSpotPriceAggregator).getRate(tokenIn, tokenOut, true) returns (uint256 rate) {
+                // Rate is typically in tokenOut decimals per tokenIn unit
+                // For WETH (18 decimals) to USDC (6 decimals): rate would be in USDC units
+                return (amountIn * rate) / 1e18;
             } catch {
-                // Fallback to mock price if 1inch call fails
+                // Fallback to offchain oracle if spot price aggregator fails
+                if (oneInchOffchainOracle.code.length > 0) {
+                    try I1inchOracle(oneInchOffchainOracle).getRate(tokenIn, tokenOut, true) returns (uint256 rate) {
+                        return (amountIn * rate) / 1e18;
+                    } catch {
+                        // Continue to fallback pricing
+                    }
+                }
             }
         }
         
-        // Fallback mock prices for testing/development
-        if (asset == WETH) {
-            return 3836.50 * 1e18;
+        // Fallback pricing for development/testing or when oracles unavailable
+        if (block.chainid == 8453) {
+            // Base mainnet fallback prices
+            if (tokenIn == WETH && tokenOut == USDC) {
+                amountOut = (amountIn * 3836) / 1e12;
+            } else if (tokenIn == USDC && tokenOut == WETH) {
+                amountOut = (amountIn * 1e12) / 3836;
+            } else {
+                amountOut = amountIn;
+            }
+        } else {
+            // Testnet/other network fallback prices
+            if (tokenIn == WETH && tokenOut == USDC) {
+                amountOut = (amountIn * 3500) / 1e12;
+            } else if (tokenIn == USDC && tokenOut == WETH) {
+                amountOut = (amountIn * 1e12) / 3500;
+            } else {
+                amountOut = amountIn;
+            }
         }
-        return 1e18;
+    }
+    
+    /**
+     * @notice Execute 1inch swap through UnoswapRouter
+     * @param tokenIn Input token address
+     * @param tokenOut Output token address  
+     * @param amountIn Amount of input tokens to swap
+     * @param minAmountOut Minimum acceptable output amount
+     * @param routingData Encoded function call for 1inch router
+     * @return amountOut Actual amount of output tokens received
+     */
+    function _execute1inchSwap(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 minAmountOut,
+        bytes calldata routingData
+    ) internal returns (uint256 amountOut) {
+        IERC20(tokenIn).safeIncreaseAllowance(ONEINCH_UNOSWAP, amountIn);
+        
+        uint256 balanceBefore = IERC20(tokenOut).balanceOf(address(this));
+        
+        (bool success, ) = ONEINCH_UNOSWAP.call(routingData);
+        if (!success) revert SettlementFailed();
+        
+        uint256 balanceAfter = IERC20(tokenOut).balanceOf(address(this));
+        amountOut = balanceAfter - balanceBefore;
+        
+        if (amountOut < minAmountOut) revert SettlementFailed();
+        
+        uint256 remainingAllowance = IERC20(tokenIn).allowance(address(this), ONEINCH_UNOSWAP);
+        if (remainingAllowance > 0) {
+            IERC20(tokenIn).safeDecreaseAllowance(ONEINCH_UNOSWAP, remainingAllowance);
+        }
+        
+        return amountOut;
+    }
+    
+    /**
+     * @notice Distribute validated settlement proceeds with economic consistency
+     * @param option Option details
+     * @param tokenOut Output token from settlement
+     * @param totalAmountOut Total amount received from settlement
+     * @param expectedProfit Expected profit before protocol fees
+     * @return takerReturn Actual amount transferred to taker
+     */
+    function _distributeValidatedProceeds(
+        ActiveOption memory option,
+        address tokenOut,
+        uint256 totalAmountOut,
+        uint256 expectedProfit
+    ) internal returns (uint256 takerReturn) {
+        // Calculate protocol fee on actual settlement profit
+        uint256 protocolFeeAmount = (expectedProfit * protocolFee) / 10000;
+        
+        // For CALL options: taker gets USDC profit
+        // For PUT options: taker gets the underlying asset
+        if (option.optionType == OptionType.CALL) {
+            // CALL: taker receives USDC profit minus protocol fee
+            takerReturn = expectedProfit - protocolFeeAmount;
+            IERC20(tokenOut).safeTransfer(option.taker, takerReturn);
+            
+            // LP gets any excess from favorable settlement
+            uint256 excess = totalAmountOut > takerReturn ? totalAmountOut - takerReturn : 0;
+            if (excess > 0) {
+                IERC20(tokenOut).safeTransfer(option.lp, excess);
+            }
+        } else {
+            // PUT: taker receives the underlying asset amount
+            takerReturn = option.amount; 
+            IERC20(tokenOut).safeTransfer(option.taker, takerReturn);
+            
+            // Any USDC excess goes to LP (rare case)
+            uint256 excess = totalAmountOut > takerReturn ? totalAmountOut - takerReturn : 0;
+            if (excess > 0) {
+                IERC20(tokenOut).safeTransfer(option.lp, excess);
+            }
+        }
+        
+        // Protocol fee collected separately via sweepProtocolFees()
+    }
+
+    /**
+     * @notice Get current asset price in USD with 18 decimal precision
+     * @param asset Address of asset to price
+     * @return price Asset price in USD (18 decimals)
+     * @dev Uses integrated 1inch quote converted to standard 18 decimal format
+     */
+    function getCurrentPrice(address asset) public view override returns (uint256) {
+        uint256 usdcAmount = _get1inchQuote(asset, USDC, 1e18);
+        return usdcAmount * 1e12;
     }
 
     function isExercisable(uint256 optionId) public view override returns (bool) {
@@ -513,60 +700,88 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         return _isProfitable(option, currentPrice);
     }
 
-    function getCommitment(bytes32 commitmentHash) external pure override returns (OptionCommitment memory) {
-        // Commitments no longer stored on-chain - handled off-chain
+    /**
+     * @notice Get commitment details (stored off-chain)
+     * @dev Commitments are stored off-chain in database, not on contract
+     */
+    function getCommitment(bytes32) external pure override returns (OptionCommitment memory) {
         revert("Commitments stored off-chain");
     }
 
+    /**
+     * @notice Get active option details
+     * @param optionId ID of the option
+     * @return option Option details
+     */
     function getOption(uint256 optionId) external view override returns (ActiveOption memory) {
         return activeOptions[optionId];
     }
 
-    function getNonce(address user) external view override returns (uint256 nonce) {
+    /**
+     * @notice Get current nonce for user
+     * @param user Address to get nonce for
+     * @return nonce Current nonce value
+     */
+    function getNonce(address user) external view override returns (uint256) {
         return nonces[user];
     }
 
-    // Interface compliance functions
+    /**
+     * @notice Create new commitment with EIP-712 signature validation
+     * @param commitment Signed commitment structure
+     */
     function createCommitment(OptionCommitment calldata commitment) external override nonReentrant whenNotPaused {
-        // Verify signature and commitment validity
         if (!_verifyCommitment(commitment)) revert InvalidSignature();
         
-        // Update nonce
         nonces[commitment.creator] = commitment.nonce + 1;
-        
         bytes32 commitmentHash = keccak256(abi.encode(commitment));
         
         emit CommitmentCreated(commitmentHash, commitment.creator, commitment.commitmentType, commitment.asset, commitment.amount, commitment.premiumAmount);
     }
     
+    /**
+     * @notice Legacy LP commitment creation (redirects to unified function)
+     * @param commitment Commitment to create
+     */
     function createLPCommitment(OptionCommitment calldata commitment) external override {
-        // Legacy support - redirect to unified createCommitment
         this.createCommitment(commitment);
     }
 
-    function createTakerCommitment(OptionCommitment calldata commitment, uint256 durationDays) external override {
-        // Legacy support - redirect to unified createCommitment
+    /**
+     * @notice Legacy taker commitment creation (redirects to unified function)
+     * @param commitment Commitment to create
+     */
+    function createTakerCommitment(OptionCommitment calldata commitment, uint256) external override {
         this.createCommitment(commitment);
     }
 
-    function getMarketplaceLiquidity(address asset, uint256 durationDays, uint256 offset, uint256 limit) 
-        external view override returns (OptionCommitment[] memory) 
+    /**
+     * @notice Get marketplace liquidity (handled off-chain)
+     * @dev Marketplace queries are handled by the API layer for efficiency
+     */
+    function getMarketplaceLiquidity(address, uint256, uint256, uint256) 
+        external pure override returns (OptionCommitment[] memory) 
     {
-        // Marketplace queries handled off-chain
         return new OptionCommitment[](0);
     }
 
-    function getOptionsByDuration(address user, uint256 minDays, uint256 maxDays) 
-        external view override returns (uint256[] memory) 
+    /**
+     * @notice Get options by duration (handled off-chain)
+     * @dev Portfolio queries are handled by the API layer for efficiency
+     */
+    function getOptionsByDuration(address, uint256, uint256) 
+        external pure override returns (uint256[] memory) 
     {
-        // Portfolio queries handled off-chain
         return new uint256[](0);
     }
 
-    function getLPCommitmentsByYield(address asset, uint256 minYield, uint256 maxYield) 
-        external view override returns (bytes32[] memory) 
+    /**
+     * @notice Get LP commitments by yield (handled off-chain)
+     * @dev Yield queries are handled by the API layer for efficiency
+     */
+    function getLPCommitmentsByYield(address, uint256, uint256) 
+        external pure override returns (bytes32[] memory) 
     {
-        // Yield queries handled off-chain
         return new bytes32[](0);
     }
 
@@ -575,8 +790,40 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
         safetyMargin = newMargin;
     }
 
-    function setSettlementRouter(address router) external override onlyOwner {
-        settlementRouter = router;
+    /**
+     * @notice Set 1inch oracle addresses
+     * @param spotPriceAggregator Address of 1inch spot price aggregator
+     * @param offchainOracle Address of 1inch offchain oracle
+     * @dev Owner can update oracle addresses if 1inch deploys new versions
+     */
+    function setOneInchOracles(address spotPriceAggregator, address offchainOracle) external onlyOwner {
+        require(spotPriceAggregator != address(0), "Invalid spot price aggregator");
+        require(offchainOracle != address(0), "Invalid offchain oracle");
+        
+        oneInchSpotPriceAggregator = spotPriceAggregator;
+        oneInchOffchainOracle = offchainOracle;
+        
+        emit OneInchOraclesUpdated(spotPriceAggregator, offchainOracle);
+    }
+
+    /**
+     * @notice Sweep residual tokens from 1inch settlements
+     * @dev Collects protocol fees and any settlement residuals for deployer
+     */
+    function sweep1inchFees() external onlyOwner {
+        uint256 wethBalance = IERC20(WETH).balanceOf(address(this));
+        uint256 wethLocked = totalLocked[WETH];
+        if (wethBalance > wethLocked) {
+            uint256 wethExcess = wethBalance - wethLocked;
+            IERC20(WETH).safeTransfer(owner(), wethExcess);
+            emit ExcessSwept(WETH, owner(), wethExcess);
+        }
+        
+        uint256 usdcBalance = IERC20(USDC).balanceOf(address(this));
+        if (usdcBalance > 0) {
+            IERC20(USDC).safeTransfer(owner(), usdcBalance);
+            emit ExcessSwept(USDC, owner(), usdcBalance);
+        }
     }
     
     // Commitment fees are handled at API layer for x402 payments
@@ -623,4 +870,5 @@ contract DurationOptions is IDurationOptions, ReentrancyGuard, Pausable, Ownable
     function emergencyUnpause() external override onlyOwner {
         _unpause();
     }
+
 }

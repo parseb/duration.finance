@@ -130,78 +130,80 @@ export default function Page() {
       </div>
 
       {/* Header */}
-      <header className="relative flex justify-between items-center p-6 bg-gradient-to-r from-purple-800/50 via-blue-800/50 to-orange-800/30 backdrop-blur-lg border-b border-purple-500/30 shadow-lg shadow-orange-500/5">
-        <div className="flex items-center space-x-4">
-          <NavigationLogo />
-        </div>
-        
-        <div className="flex items-center space-x-3">
-          {isMiniApp === true && context?.client.added && (
-            <button
-              onClick={handleAddFrame}
-              className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 rounded-xl text-sm font-semibold shadow-lg transform hover:scale-105 transition-all duration-200"
-            >
-              ✨ SAVE
-            </button>
-          )}
-          {isMiniApp === true && (
-            <>
+      <header className="relative bg-gradient-to-r from-purple-800/50 via-blue-800/50 to-orange-800/30 backdrop-blur-lg border-b border-purple-500/30 shadow-lg shadow-orange-500/5">
+        <div className="max-w-4xl mx-auto flex justify-between items-center p-6">
+          <div className="flex items-center space-x-4">
+            <NavigationLogo />
+          </div>
+          
+          <div className="flex items-center space-x-4">
+            <LivePriceBadge />
+            {isMiniApp === true && context?.client.added && (
               <button
-                onClick={() => viewProfile()}
-                className="px-4 py-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 border border-purple-400/50 rounded-xl text-sm font-semibold backdrop-blur-sm transform hover:scale-105 transition-all duration-200"
+                onClick={handleAddFrame}
+                className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 rounded-xl text-sm font-semibold shadow-lg transform hover:scale-105 transition-all duration-200"
               >
-                👤 PROFILE
+                ✨ SAVE
               </button>
-              <button
-                onClick={close}
-                className="px-4 py-2 text-sm font-semibold text-gray-300 hover:text-white transform hover:scale-105 transition-all duration-200"
-              >
-                ✕ CLOSE
-              </button>
-            </>
-          )}
+            )}
+            {isMiniApp === true && (
+              <>
+                <button
+                  onClick={() => viewProfile()}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 border border-purple-400/50 rounded-xl text-sm font-semibold backdrop-blur-sm transform hover:scale-105 transition-all duration-200"
+                >
+                  👤 PROFILE
+                </button>
+                <button
+                  onClick={close}
+                  className="px-4 py-2 text-sm font-semibold text-gray-300 hover:text-white transform hover:scale-105 transition-all duration-200"
+                >
+                  ✕ CLOSE
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
       {/* Enhanced Wallet Connection */}
-      <div className="relative p-6 bg-gradient-to-r from-purple-800/30 to-blue-800/30 backdrop-blur-lg border-b border-purple-500/20">
-        <div className="flex justify-between items-center">
+      <div className="relative p-8 bg-gradient-to-r from-purple-800/30 to-blue-800/30 backdrop-blur-lg border-b border-purple-500/20">
+        <div className="flex justify-center items-center max-w-4xl mx-auto">
           <WalletConnection />
-          <div className="flex items-center space-x-4">
-            <LivePriceBadge />
-          </div>
         </div>
       </div>
 
       {/* Tab Navigation */}
       <div className="relative flex bg-gradient-to-r from-purple-800/20 via-blue-800/20 to-orange-800/15 backdrop-blur-sm border-b border-purple-500/20">
-        {([
-          {key: 'make', label: 'Offer', icon: '📋'},
-          {key: 'take', label: 'Take', icon: '🎯'}, 
-          {key: 'portfolio', label: 'Portfolio', icon: '📊'}
-        ] as const).map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key as any)}
-            className={`relative flex-1 py-4 px-6 text-center font-semibold transition-all duration-300 transform hover:scale-105 ${
-              activeTab === tab.key
-                ? 'text-white bg-gradient-to-r from-orange-600/40 via-purple-600/50 to-pink-600/40 shadow-lg backdrop-blur-sm'
-                : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-orange-600/15 hover:via-purple-600/20 hover:to-pink-600/15'
-            }`}
-          >
-            <div className="flex items-center justify-center space-x-2">
-              <span className="text-lg">{tab.icon}</span>
-              <span>{tab.label}</span>
-            </div>
-            {activeTab === tab.key && (
-              <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-orange-600 rounded-t-full animate-pulse shadow-lg shadow-orange-500/50"></div>
-            )}
-          </button>
-        ))}
+        <div className="max-w-4xl mx-auto w-full flex">
+          {([
+            {key: 'make', label: 'Offer', icon: '📋'},
+            {key: 'take', label: 'Take', icon: '🎯'}, 
+            {key: 'portfolio', label: 'Portfolio', icon: '📊'}
+          ] as const).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key as any)}
+              className={`relative flex-1 py-5 px-6 text-center font-semibold transition-all duration-300 transform hover:scale-105 ${
+                activeTab === tab.key
+                  ? 'text-white bg-gradient-to-r from-orange-600/40 via-purple-600/50 to-pink-600/40 shadow-lg backdrop-blur-sm'
+                  : 'text-purple-200 hover:text-white hover:bg-gradient-to-r hover:from-orange-600/15 hover:via-purple-600/20 hover:to-pink-600/15'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-2">
+                <span className="text-lg">{tab.icon}</span>
+                <span>{tab.label}</span>
+              </div>
+              {activeTab === tab.key && (
+                <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-orange-600 rounded-t-full animate-pulse shadow-lg shadow-orange-500/50"></div>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Main Content */}
-      <main className="relative p-6 pb-20">
+      <main className="relative p-8 pb-24">
         <div className="max-w-4xl mx-auto">
           {activeTab === 'make' && <MakeTab />}
           {activeTab === 'take' && <TakeTab />}
@@ -247,7 +249,7 @@ export default function Page() {
               Signal
             </button>
             <button
-              onClick={() => openUrl('mailto:contact@duration.finance')}
+              onClick={() => openUrl('mailto:petra306@protonmail.com')}
               className="text-blue-300 hover:text-white transition-colors"
             >
               Contact
@@ -276,17 +278,11 @@ function MakeTab() {
         }}
       />
       
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <CommitmentList 
-          key={`my-${refreshTrigger}`}
-          showOnlyMyCommitments={true}
-          onCancel={() => setRefreshTrigger(prev => prev + 1)}
-        />
-        <CommitmentList 
-          key={`all-${refreshTrigger}`}
-          showOnlyMyCommitments={false}
-        />
-      </div>
+      <CommitmentList 
+        key={`user-${refreshTrigger}`}
+        showOnlyMyCommitments={true}
+        onCancel={() => setRefreshTrigger(prev => prev + 1)}
+      />
     </div>
   );
 }
@@ -297,31 +293,60 @@ function TakeTab() {
   const [yieldRange, setYieldRange] = useState([0, 5]);
   const [sortBy, setSortBy] = useState<'daily-cost' | 'total-cost' | 'yield'>('daily-cost');
   const [selectedDuration, setSelectedDuration] = useState(7);
+  const [realCommitments, setRealCommitments] = useState<any[]>([]);
   
   // Get real-time price from the price service
   const { price } = useWethPrice();
   const currentPrice = price?.price || 3836.50; // Fallback to default if no price data
   
-  // Expanded mock liquidity data for better chart visualization
-  const mockLiquidity = [
-    { id: 1, amount: 2.0, dailyPremium: 75, minLock: 1, maxDuration: 14, lp: '0x1234...5678' },
-    { id: 2, amount: 1.5, dailyPremium: 45, minLock: 2, maxDuration: 7, lp: '0x8765...4321' },
-    { id: 3, amount: 0.8, dailyPremium: 25, minLock: 1, maxDuration: 30, lp: '0xabcd...efgh' },
-    { id: 4, amount: 3.0, dailyPremium: 90, minLock: 3, maxDuration: 21, lp: '0x9876...1234' },
-    { id: 5, amount: 1.2, dailyPremium: 35, minLock: 1, maxDuration: 14, lp: '0x5555...6666' },
-    { id: 6, amount: 0.5, dailyPremium: 18, minLock: 1, maxDuration: 7, lp: '0x7777...8888' },
-    { id: 7, amount: 4.0, dailyPremium: 120, minLock: 7, maxDuration: 30, lp: '0x9999...aaaa' },
-    { id: 8, amount: 0.3, dailyPremium: 12, minLock: 1, maxDuration: 5, lp: '0xbbbb...cccc' }
-  ].map(item => ({
-    ...item,
-    totalCost: item.dailyPremium * selectedDuration,
-    collateralValue: item.amount * currentPrice,
-    dailyYield: (item.dailyPremium / (item.amount * currentPrice)) * 100,
-    canTake: selectedDuration >= item.minLock && selectedDuration <= item.maxDuration
-  }));
+  // Fetch real commitments from API
+  useEffect(() => {
+    async function fetchCommitments() {
+      try {
+        const response = await fetch('/api/commitments?type=offer');
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Fetched commitments data:', data);
+          console.log('First commitment addresses:', data.commitments[0] ? {
+            lp: data.commitments[0].lp,
+            asset: data.commitments[0].asset,
+            signature: data.commitments[0].signature
+          } : 'No commitments');
+          setRealCommitments(data.commitments || []);
+        } else {
+          console.error('Failed to fetch commitments:', response.status);
+        }
+      } catch (error) {
+        console.error('Error fetching commitments:', error);
+      }
+    }
+    
+    fetchCommitments();
+  }, []);
   
-  // Filter liquidity based on sliders
-  const filteredLiquidity = mockLiquidity.filter(item => 
+  // Convert real commitments to the format expected by the filters
+  const realLiquidityData = realCommitments.map(commitment => {
+    const amount = Number(commitment.amount) / 1e18; // Convert from wei
+    const dailyPremium = Number(commitment.dailyPremiumUsdc) / 1e6; // Convert from USDC decimals
+    const minLock = Number(commitment.minLockDays);
+    const maxDuration = Number(commitment.maxDurationDays);
+    
+    return {
+      id: commitment.id,
+      amount,
+      dailyPremium,
+      minLock,
+      maxDuration,
+      lp: commitment.lp,
+      totalCost: dailyPremium * selectedDuration,
+      collateralValue: amount * currentPrice,
+      dailyYield: amount > 0 ? (dailyPremium / (amount * currentPrice)) * 100 : 0,
+      canTake: selectedDuration >= minLock && selectedDuration <= maxDuration
+    };
+  });
+  
+  // Filter real liquidity based on sliders
+  const filteredLiquidity = realLiquidityData.filter(item => 
     selectedDuration >= durationRange[0] && selectedDuration <= durationRange[1] &&
     item.dailyPremium >= costRange[0] && item.dailyPremium <= costRange[1] &&
     item.dailyYield >= yieldRange[0] && item.dailyYield <= yieldRange[1]
@@ -337,11 +362,11 @@ function TakeTab() {
     }
   });
   
-  // Generate chart data for LP concentration
+  // Generate chart data for LP concentration using real data
   const generateChartData = () => {
     const durationBuckets = Array.from({length: 30}, (_, i) => i + 1);
     return durationBuckets.map(duration => {
-      const availableOffers = mockLiquidity.filter(item => 
+      const availableOffers = realLiquidityData.filter(item => 
         duration >= item.minLock && duration <= item.maxDuration
       );
       const totalLiquidity = availableOffers.reduce((sum, item) => sum + item.amount, 0);
@@ -535,8 +560,8 @@ function TakeTab() {
           </div>
         </div>
         
-        {/* Available Liquidity */}
-        {/* Show real commitments from database */}
+        {/* Available Options to Take */}
+        {/* Show offers from other users that can be taken */}
         <CommitmentList 
           showOnlyMyCommitments={false}
           commitmentType="OFFER"

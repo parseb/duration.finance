@@ -3,6 +3,7 @@ import { SignedLPCommitment, SignedOptionCommitment, CommitmentType } from '@/li
 import { createCommitmentStorage } from '@/lib/database/commitment-storage';
 import { createPostgreSQLStorage } from '@/lib/database/postgresql-storage';
 import { createCommitmentValidator } from '@/lib/database/commitment-validation';
+import { verifyCommitment } from '@/lib/eip712/lp-commitment';
 
 // API Protection - Frontend Only Access
 function isInternalRequest(request: NextRequest): boolean {
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const creatorAddress = searchParams.get('creator');
+    const excludeCreator = searchParams.get('excludeCreator');
     const commitmentType = searchParams.get('type'); // 'offer' or 'demand'
     const lpAddress = searchParams.get('lp'); // Legacy support
 
@@ -69,6 +71,22 @@ export async function GET(request: NextRequest) {
     } else {
       // Get all active commitments
       commitments = await storage.getAllActive();
+    }
+
+    // Filter out commitments from excluded creator (for Take tab)
+    if (excludeCreator) {
+      commitments = commitments.filter(commitment => 
+        commitment.lp_address?.toLowerCase() !== excludeCreator.toLowerCase()
+      );
+    }
+
+    // Filter by commitment type if specified
+    if (commitmentType === 'offer') {
+      // For LP offers, we want all commitments since they are offers by LPs
+      // No additional filtering needed as all stored commitments are LP offers
+    } else if (commitmentType === 'demand') {
+      // Filter for taker demands (not currently stored in this table)
+      commitments = [];
     }
 
     // Convert BigInt values to strings for JSON serialization
@@ -123,58 +141,82 @@ export async function POST(request: NextRequest) {
   try {
     const commitmentData = await request.json();
 
-    // Check if this is a unified commitment or legacy LP commitment
-    const isUnifiedCommitment = 'commitmentType' in commitmentData;
-
-    let commitmentId: string;
-
-    if (isUnifiedCommitment) {
-      // Handle unified commitment
-      const commitment: SignedOptionCommitment = {
-        creator: commitmentData.creator as `0x${string}`,
-        asset: commitmentData.asset as `0x${string}`,
-        amount: BigInt(commitmentData.amount),
-        premiumAmount: BigInt(commitmentData.premiumAmount),
-        minDurationDays: BigInt(commitmentData.minDurationDays),
-        maxDurationDays: BigInt(commitmentData.maxDurationDays),
-        optionType: commitmentData.optionType,
-        commitmentType: commitmentData.commitmentType,
-        expiry: BigInt(commitmentData.expiry),
-        nonce: BigInt(commitmentData.nonce),
-        signature: commitmentData.signature as `0x${string}`,
-      };
-
-      // Convert to legacy format for backward compatibility
-      const legacyCommitment: SignedLPCommitment = {
-        lp: commitment.creator,
-        asset: commitment.asset,
-        amount: commitment.amount,
-        dailyPremiumUsdc: commitment.premiumAmount,
-        minLockDays: commitment.minDurationDays,
-        maxDurationDays: commitment.maxDurationDays,
-        optionType: commitment.optionType,
-        expiry: commitment.expiry,
-        nonce: commitment.nonce,
-        signature: commitment.signature,
-      };
-      commitmentId = await storage.store(legacyCommitment);
-    } else {
-      // Handle legacy LP commitment
-      const commitment: SignedLPCommitment = {
-        lp: commitmentData.lp as `0x${string}`,
-        asset: commitmentData.asset as `0x${string}`,
-        amount: BigInt(commitmentData.amount),
-        dailyPremiumUsdc: BigInt(commitmentData.dailyPremiumUsdc),
-        minLockDays: BigInt(commitmentData.minLockDays),
-        maxDurationDays: BigInt(commitmentData.maxDurationDays),
-        optionType: commitmentData.optionType,
-        expiry: BigInt(commitmentData.expiry),
-        nonce: BigInt(commitmentData.nonce),
-        signature: commitmentData.signature as `0x${string}`,
-      };
-
-      commitmentId = await storage.store(commitment);
+    // Validate required fields for new commitment structure
+    const requiredFields = ['creator', 'asset', 'amount', 'dailyPremiumUsdc', 'minLockDays', 'maxDurationDays', 'optionType', 'commitmentType', 'expiry', 'nonce', 'signature'];
+    const missingFields = requiredFields.filter(field => !(field in commitmentData));
+    
+    if (missingFields.length > 0) {
+      return NextResponse.json({ 
+        error: 'Missing required fields', 
+        missingFields 
+      }, { status: 400 });
     }
+
+    // Create commitment object for validation
+    const commitment = {
+      creator: commitmentData.creator,
+      asset: commitmentData.asset,
+      amount: commitmentData.amount,
+      dailyPremiumUsdc: commitmentData.dailyPremiumUsdc,
+      minLockDays: parseInt(commitmentData.minLockDays),
+      maxDurationDays: parseInt(commitmentData.maxDurationDays),
+      optionType: commitmentData.optionType,
+      commitmentType: commitmentData.commitmentType,
+      expiry: commitmentData.expiry,
+      nonce: commitmentData.nonce,
+      signature: commitmentData.signature,
+    };
+
+    // Validate EIP-712 signature before saving
+    console.log('Validating signature for commitment from:', commitment.creator);
+    const contractAddress = process.env.NEXT_PUBLIC_DURATION_OPTIONS_ADDRESS_BASE_SEPOLIA as `0x${string}`;
+    
+    if (!contractAddress || contractAddress === '0x0000000000000000000000000000000000000000') {
+      return NextResponse.json({ 
+        error: 'Contract not configured', 
+        message: 'Duration Options contract address not set' 
+      }, { status: 500 });
+    }
+
+    try {
+      const isValidSignature = await verifyCommitment(commitment, contractAddress, 84532);
+      
+      if (!isValidSignature) {
+        console.log('Invalid signature for commitment:', {
+          creator: commitment.creator,
+          nonce: commitment.nonce,
+          signature: commitment.signature
+        });
+        return NextResponse.json({ 
+          error: 'Invalid signature', 
+          message: 'EIP-712 signature verification failed' 
+        }, { status: 400 });
+      }
+      
+      console.log('Signature validated successfully for:', commitment.creator);
+    } catch (signatureError) {
+      console.error('Signature validation error:', signatureError);
+      return NextResponse.json({ 
+        error: 'Signature validation failed', 
+        message: signatureError instanceof Error ? signatureError.message : 'Unknown error' 
+      }, { status: 400 });
+    }
+
+    // Convert to legacy format for storage compatibility
+    const legacyCommitment: SignedLPCommitment = {
+      lp: commitment.creator,
+      asset: commitment.asset,
+      amount: BigInt(commitment.amount),
+      dailyPremiumUsdc: BigInt(commitment.dailyPremiumUsdc),
+      minLockDays: BigInt(commitment.minLockDays),
+      maxDurationDays: BigInt(commitment.maxDurationDays),
+      optionType: commitment.optionType,
+      expiry: BigInt(commitment.expiry),
+      nonce: BigInt(commitment.nonce),
+      signature: commitment.signature,
+    };
+
+    const commitmentId = await storage.store(legacyCommitment);
 
     return NextResponse.json(
       {

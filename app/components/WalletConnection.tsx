@@ -39,7 +39,7 @@ export function WalletConnection() {
   const { connectors, connect } = useConnect();
   const { disconnect } = useDisconnect();
   const [showWalletOptions, setShowWalletOptions] = useState(false);
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, right: 0 });
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const [mounted, setMounted] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const isMiniApp = useIsMiniApp();
@@ -51,9 +51,11 @@ export function WalletConnection() {
   useEffect(() => {
     if (showWalletOptions && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
+      // Position dropdown aligned to the right edge of the button
+      const left = rect.right - 256; // 256px is the dropdown width (w-64)
       setDropdownPosition({
         top: rect.bottom + 8,
-        right: window.innerWidth - rect.right
+        left: Math.max(16, left) // Ensure minimum 16px from left edge of screen
       });
     }
   }, [showWalletOptions]);
@@ -97,7 +99,7 @@ export function WalletConnection() {
                 className="fixed w-64 bg-gray-900/95 backdrop-blur-lg rounded-xl border border-gray-700/50 shadow-xl z-[999999]"
                 style={{
                   top: `${dropdownPosition.top}px`,
-                  right: `${dropdownPosition.right}px`
+                  left: `${dropdownPosition.left}px`
                 }}
               >
                 <div className="p-4 border-b border-gray-700/50">

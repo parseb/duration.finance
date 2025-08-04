@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { SignedOptionCommitment, CommitmentType } from '../../lib/eip712/verification';
 import { formatEther, formatUnits } from 'viem';
-import { TakeCommitmentButton } from './TakeCommitmentButton';
+import { TakeCommitmentButtonUnified } from './TakeCommitmentButtonUnified';
 import { useWethPrice } from '../../hooks/use-prices';
 
 interface CommitmentListProps {
@@ -40,8 +40,12 @@ export function CommitmentList({
       let url = '/api/commitments';
       const params = new URLSearchParams();
 
+      // Show user's commitments only if requested
       if (showOnlyMyCommitments && address) {
         params.append('creator', address);
+      } else if (!showOnlyMyCommitments && address) {
+        // For Take tab, exclude user's own commitments
+        params.append('excludeCreator', address);
       }
 
       if (commitmentType !== 'ALL') {
@@ -54,6 +58,12 @@ export function CommitmentList({
 
       const response = await fetch(url);
       if (!response.ok) {
+        // Instead of throwing error, handle gracefully for common scenarios
+        if (response.status === 404 || response.status === 401) {
+          // No commitments found or user not logged in - this is normal
+          setCommitments([]);
+          return;
+        }
         throw new Error('Failed to fetch commitments');
       }
 
@@ -142,7 +152,7 @@ export function CommitmentList({
 
     const amount = getAmount(commitment.amount);
     const collateralValue = Number(formatEther(amount)) * currentPrice;
-    const isOffer = (commitment.commitmentType || 0) === CommitmentType.LP_OFFER;
+    const isOffer = (commitment.commitmentType || 0) === CommitmentType.OFFER;
     
     if (!isOffer) return 0; // Taker demands don't have yield
     
@@ -194,11 +204,11 @@ export function CommitmentList({
           <div className="text-blue-300 mb-4">
             {showOnlyMyCommitments 
               ? "You haven't created any commitments yet."
-              : "No active commitments available."}
+              : "No active commitments available to take."}
           </div>
           {showOnlyMyCommitments && (
             <p className="text-blue-400 text-sm">
-              Create your first commitment above to start trading.
+              Create your first commitment above to start offering options.
             </p>
           )}
         </div>
@@ -222,7 +232,7 @@ export function CommitmentList({
       
       {!showOnlyMyCommitments && (
         <div className="mb-4">
-          <label className="block text-sm font-medium mb-2">Duration for calculation</label>
+          <label className="block text-sm font-medium mb-2">Wanted duration</label>
           <input
             type="number"
             min="1"
@@ -240,8 +250,8 @@ export function CommitmentList({
           const commitmentId = commitment.id || hashCommitment(commitment); // Use database ID if available
           const expired = isExpired(commitment.expiry);
           const currentPrice = wethPrice?.price || 3836.50; // Real-time price with fallback
-          const isOffer = (commitment.commitmentType || 0) === CommitmentType.LP_OFFER;
-          const isDemand = (commitment.commitmentType || 0) === CommitmentType.TAKER_DEMAND;
+          const isOffer = (commitment.commitmentType || 0) === CommitmentType.OFFER;
+          const isDemand = (commitment.commitmentType || 0) === CommitmentType.DEMAND;
           const dailyYield = calculateYield(commitment, currentPrice);
           const annualizedYield = dailyYield * 365;
           const creator = commitment.creator || commitment.lp; // Handle both formats
@@ -293,7 +303,7 @@ export function CommitmentList({
                         ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-yellow-500/30' 
                         : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-purple-500/30'
                     }`}>
-                      {isOffer ? '🎯 OFFER' : '🚀 DEMAND'}
+                      {isOffer ? ' 📢 OFFER' : '🎯 DEMAND'}
                     </span>
                     {expired && (
                       <span className="px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-red-600 to-red-700 text-white shadow-lg shadow-red-600/30 animate-pulse">
@@ -361,15 +371,16 @@ export function CommitmentList({
                 
                 <div className="flex space-x-2">
                   {canTake && (
-                    <TakeCommitmentButton
+                    <TakeCommitmentButtonUnified
                       commitment={{
-                        lp: commitment.creator, // Map creator to lp for backward compatibility
+                        creator: commitment.creator || commitment.lp, // Use correct field from database
                         asset: commitment.asset,
                         amount: commitment.amount,
-                        dailyPremiumUsdc: commitment.premiumAmount,
-                        minLockDays: commitment.minDurationDays,
-                        maxDurationDays: commitment.maxDurationDays,
+                        premiumAmount: commitment.premiumAmount || commitment.dailyPremiumUsdc || '0',
+                        minDuration: commitment.minDurationDays || commitment.minLockDays || '1',
+                        maxDuration: commitment.maxDurationDays,
                         optionType: commitment.optionType,
+                        commitmentType: commitment.commitmentType || 0, // Default to OFFER
                         expiry: commitment.expiry,
                         nonce: commitment.nonce,
                         signature: commitment.signature,

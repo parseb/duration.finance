@@ -38,9 +38,9 @@ export class PostgreSQLCommitmentStorage implements CommitmentStorage {
           lp_address, 
           asset_address, 
           amount, 
-          target_price,
-          premium, 
-          duration_days, 
+          daily_premium_usdc,
+          min_lock_days, 
+          max_duration_days, 
           option_type, 
           expiry, 
           nonce, 
@@ -53,11 +53,11 @@ export class PostgreSQLCommitmentStorage implements CommitmentStorage {
         commitment.lp,
         commitment.asset,
         commitment.amount.toString(),
-        (Number(commitment.dailyPremiumUsdc) / 1e6).toString(), // LP's daily premium becomes target_price
-        '0', // premium must be 0 for LP commitments
-        Number(commitment.maxDurationDays), // Use max duration as primary duration
-        commitment.optionType === 0 ? 'CALL' : 'PUT', // Convert number to enum string
-        new Date(Number(commitment.expiry) * 1000), // Convert Unix timestamp to Date object
+        (Number(commitment.dailyPremiumUsdc) / 1e6).toString(), // Convert to USDC with 6 decimals
+        Number(commitment.minLockDays || 1), // Minimum lock days
+        Number(commitment.maxDurationDays), // Maximum duration days
+        commitment.optionType, // Keep as number (0 for CALL, 1 for PUT)
+        Number(commitment.expiry), // Store as Unix timestamp (BIGINT)
         Number(commitment.nonce),
         commitment.signature,
       ];
@@ -98,7 +98,7 @@ export class PostgreSQLCommitmentStorage implements CommitmentStorage {
         SELECT * FROM commitments 
         WHERE lp_address = $1 
           AND taken_at IS NULL 
-          AND expiry > NOW()
+          AND expiry > EXTRACT(EPOCH FROM NOW())
         ORDER BY created_at DESC
       `;
 
@@ -117,7 +117,7 @@ export class PostgreSQLCommitmentStorage implements CommitmentStorage {
       const query = `
         SELECT * FROM commitments 
         WHERE taken_at IS NULL 
-          AND expiry > NOW()
+          AND expiry > EXTRACT(EPOCH FROM NOW())
         ORDER BY created_at DESC
       `;
 
@@ -304,16 +304,7 @@ export class PostgreSQLCommitmentStorage implements CommitmentStorage {
    * Convert database row to SignedLPCommitment
    */
   private rowToCommitment(row: any): SignedLPCommitment {
-    // Handle the actual database schema columns
-    const lpAddress = row.lp_address || row.taker_address; // Either LP or Taker can be the creator
-    
-    // For LP commitments, target_price contains the daily premium they want
-    // For taker commitments, premium contains the total premium they're willing to pay
-    const dailyPremiumUsdc = row.lp_address 
-      ? BigInt(Math.round(parseFloat(row.target_price.toString()) * 1e6)) // LP: convert target_price to USDC wei
-      : BigInt(Math.round(parseFloat(row.premium.toString()) * 1e6)); // Taker: convert premium to USDC wei
-    
-    // Helper to safely convert decimal strings to BigInt
+    // Helper to safely convert values to BigInt
     const toBigInt = (value: any): bigint => {
       if (typeof value === 'string') {
         // Remove decimal places for BigInt conversion
@@ -323,16 +314,19 @@ export class PostgreSQLCommitmentStorage implements CommitmentStorage {
       return BigInt(Math.floor(Number(value)));
     };
     
+    // Convert daily premium from USDC decimal to wei (multiply by 1e6)
+    const dailyPremiumUsdc = BigInt(Math.round(parseFloat(row.daily_premium_usdc.toString()) * 1e6));
+    
     return {
       id: row.id, // Include database ID for cancellation
-      lp: lpAddress as `0x${string}`,
+      lp: row.lp_address as `0x${string}`,
       asset: row.asset_address as `0x${string}`,
       amount: toBigInt(row.amount),
       dailyPremiumUsdc: dailyPremiumUsdc,
-      minLockDays: BigInt(row.duration_days || 1), // Use duration_days or default
-      maxDurationDays: BigInt(row.duration_days || 7), // Use duration_days or default
-      optionType: row.option_type === 'CALL' ? 0 : 1, // Convert enum to number
-      expiry: BigInt(Math.floor(new Date(row.expiry).getTime() / 1000)), // Convert timestamp to Unix
+      minLockDays: BigInt(row.min_lock_days || 1),
+      maxDurationDays: BigInt(row.max_duration_days || 7),
+      optionType: Number(row.option_type), // Already stored as number (0 or 1)
+      expiry: BigInt(row.expiry), // Already stored as Unix timestamp
       nonce: BigInt(row.nonce),
       signature: row.signature as `0x${string}`,
     };

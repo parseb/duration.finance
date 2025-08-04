@@ -10,7 +10,7 @@ interface IDurationOptions {
     
     enum OptionType { CALL, PUT }
     enum OptionState { CREATED, TAKEN, EXERCISED, EXPIRED }
-    enum CommitmentType { LP_OFFER, TAKER_DEMAND }
+    enum CommitmentType { OFFER, DEMAND }
 
     struct OptionCommitment {
         address creator;               // Commitment creator (LP or Taker)
@@ -20,7 +20,7 @@ interface IDurationOptions {
         uint256 minDurationDays;       // Minimum duration in days
         uint256 maxDurationDays;       // Maximum duration in days
         OptionType optionType;         // CALL or PUT
-        CommitmentType commitmentType; // LP_OFFER or TAKER_DEMAND
+        CommitmentType commitmentType; // OFFER or DEMAND
         uint256 expiry;                // Commitment expiration timestamp  
         uint256 nonce;                 // Nonce for signature uniqueness
         bytes signature;               // EIP-712 signature

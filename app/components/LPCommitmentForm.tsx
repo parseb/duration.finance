@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi';
 import { parseEther, parseUnits, Address } from 'viem';
 import { SignedLPCommitment, LPCommitment } from '../../lib/eip712/verification';
+import { LP_COMMITMENT_DOMAIN, COMMITMENT_TYPES, CommitmentMessage, CommitmentType } from '../../lib/eip712/lp-commitment';
 import { useWethPrice } from '../../hooks/use-prices';
 
 interface LPCommitmentFormProps {
@@ -13,6 +14,7 @@ interface LPCommitmentFormProps {
 
 export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) {
   const { address, isConnected } = useAccount();
+  const { signTypedDataAsync } = useSignTypedData();
   
   // Form state
   const [amount, setAmount] = useState('');
@@ -66,33 +68,54 @@ export function LPCommitmentForm({ onSuccess, onError }: LPCommitmentFormProps) 
     try {
       // Create commitment struct
       const expiry = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours from now
-      const nonce = Math.floor(Math.random() * 1000000); // Random nonce
+      const nonce = Date.now(); // Use timestamp as nonce for uniqueness
 
-      // For now, create a mock signature - in production, would use wallet signing
-      const mockSignature = '0x' + '0'.repeat(130) as `0x${string}`;
-      
-      const commitment: SignedLPCommitment = {
-        lp: address,
+      // Create the message for EIP-712 signing
+      const message: CommitmentMessage = {
+        creator: address,
         asset: WETH_BASE as `0x${string}`,
         amount: parseEther(amount),
         dailyPremiumUsdc: parseUnits(dailyPremium, 6),
         minLockDays: BigInt(minLockNum),
         maxDurationDays: BigInt(maxDurationNum),
         optionType: optionType === 'CALL' ? 0 : 1,
+        commitmentType: CommitmentType.OFFER, // LP is creating an offer
         expiry: BigInt(expiry),
         nonce: BigInt(nonce),
-        signature: mockSignature,
+      };
+
+      // Sign with EIP-712
+      const signature = await signTypedDataAsync({
+        domain: LP_COMMITMENT_DOMAIN,
+        types: COMMITMENT_TYPES,
+        primaryType: 'Commitment',
+        message,
+      });
+      
+      const commitment = {
+        creator: address,
+        asset: WETH_BASE as `0x${string}`,
+        amount: parseEther(amount),
+        dailyPremiumUsdc: parseUnits(dailyPremium, 6),
+        minLockDays: BigInt(minLockNum),
+        maxDurationDays: BigInt(maxDurationNum),
+        optionType: optionType === 'CALL' ? 0 : 1,
+        commitmentType: CommitmentType.OFFER,
+        expiry: BigInt(expiry),
+        nonce: BigInt(nonce),
+        signature,
       };
 
       // Convert BigInt values to strings for JSON serialization
       const commitmentForAPI = {
-        lp: commitment.lp,
+        creator: commitment.creator,
         asset: commitment.asset,
         amount: commitment.amount.toString(),
         dailyPremiumUsdc: commitment.dailyPremiumUsdc.toString(),
         minLockDays: commitment.minLockDays.toString(),
         maxDurationDays: commitment.maxDurationDays.toString(),
         optionType: commitment.optionType,
+        commitmentType: commitment.commitmentType,
         expiry: commitment.expiry.toString(),
         nonce: commitment.nonce.toString(),
         signature: commitment.signature,

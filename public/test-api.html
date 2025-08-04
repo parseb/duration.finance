@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test API Response</title>
+</head>
+<body>
+    <h1>Testing API Response</h1>
+    <div id="result"></div>
+    
+    <script>
+        async function testAPI() {
+            try {
+                const response = await fetch('/api/commitments?type=offer');
+                const data = await response.json();
+                
+                document.getElementById('result').innerHTML = `
+                    <h2>API Response:</h2>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                    
+                    <h2>First Commitment Fields:</h2>
+                    <pre>${data.commitments && data.commitments[0] ? JSON.stringify({
+                        lp: data.commitments[0].lp,
+                        asset: data.commitments[0].asset,
+                        signature: data.commitments[0].signature,
+                        amount: data.commitments[0].amount,
+                        dailyPremiumUsdc: data.commitments[0].dailyPremiumUsdc
+                    }, null, 2) : 'No commitments'}</pre>
+                `;
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<p>Error: ${error}</p>`;
+            }
+        }
+        
+        // Test when page loads
+        testAPI();
+    </script>
+</body>
+</html>

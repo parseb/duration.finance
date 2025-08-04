@@ -40,6 +40,22 @@ export const LP_COMMITMENT_TYPES = {
   ],
 } as const;
 
+// Unified commitment types for the new contract
+export const UNIFIED_COMMITMENT_TYPES = {
+  Commitment: [
+    { name: 'creator', type: 'address' },
+    { name: 'asset', type: 'address' },
+    { name: 'amount', type: 'uint256' },
+    { name: 'premiumAmount', type: 'uint256' },
+    { name: 'minDuration', type: 'uint256' },
+    { name: 'maxDuration', type: 'uint256' },
+    { name: 'optionType', type: 'uint8' },
+    { name: 'commitmentType', type: 'uint8' },
+    { name: 'expiry', type: 'uint256' },
+    { name: 'nonce', type: 'uint256' },
+  ],
+} as const;
+
 // Option types enum
 export enum OptionType {
   CALL = 0,
@@ -48,8 +64,8 @@ export enum OptionType {
 
 // Commitment types enum
 export enum CommitmentType {
-  LP_OFFER = 0,
-  TAKER_DEMAND = 1,
+  OFFER = 0,
+  DEMAND = 1,
 }
 
 // Unified Commitment interface
@@ -57,7 +73,7 @@ export interface OptionCommitment {
   creator: `0x${string}`;
   asset: `0x${string}`;
   amount: bigint;
-  premiumAmount: bigint; // Daily rate for LP_OFFER, total amount for TAKER_DEMAND
+  premiumAmount: bigint; // Daily rate for OFFER, total amount for DEMAND
   minDurationDays: bigint;
   maxDurationDays: bigint;
   optionType: OptionType;
@@ -86,6 +102,25 @@ export interface LPCommitment {
 
 // Legacy LP Commitment with signature
 export interface SignedLPCommitment extends LPCommitment {
+  signature: `0x${string}`;
+}
+
+// Unified Commitment interface
+export interface UnifiedCommitment {
+  creator: `0x${string}`;
+  asset: `0x${string}`;
+  amount: bigint;
+  premiumAmount: bigint;
+  minDuration: bigint;
+  maxDuration: bigint;
+  optionType: OptionType;
+  commitmentType: CommitmentType;
+  expiry: bigint;
+  nonce: bigint;
+}
+
+// Unified Commitment with signature
+export interface SignedUnifiedCommitment extends UnifiedCommitment {
   signature: `0x${string}`;
 }
 
@@ -204,7 +239,7 @@ export function validateCommitmentStructure(
 
   // Check commitment type
   if (![0, 1].includes(commitment.commitmentType)) {
-    errors.push('Commitment type must be LP_OFFER (0) or TAKER_DEMAND (1)');
+    errors.push('Commitment type must be OFFER (0) or DEMAND (1)');
   }
 
   return {

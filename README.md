@@ -1,475 +1,259 @@
 # Duration.Finance
 
-A fully-collateralized, duration-centric options protocol for Base mini apps using 1inch for settlement.
+**A duration-centric market making venue for fully-collateralized options on Base**
 
-## Overview
+Duration.Finance revolutionizes options trading by transforming it into a **duration marketplace** where LPs compete on daily yield rates and takers choose optimal lock periods.
 
-Duration.Finance revolutionizes options trading by making **duration the primary pricing factor**. Unlike traditional options that focus on strike prices, our protocol allows LPs to set daily premium rates and duration ranges, while takers choose how long they want to lock the collateral.
+## 🎯 Core Innovation: Duration Market Making
 
-### Core Innovation: Duration-Centric Pricing
+Unlike traditional options focused on strike prices, Duration.Finance creates a **duration-first marketplace** where:
 
-**Traditional Options**: Fixed strike price, premium varies by duration  
-**Duration.Finance**: LP sets daily premium, taker selects duration
+- **LPs set daily rates**: Compete on daily premium rates across duration ranges
+- **Takers choose duration**: Select optimal lock periods for their strategies  
+- **Market price strikes**: Strike prices set to current market when taken
+- **Yield transparency**: Real-time LP yield calculations drive competition
 
 ```
-LP Offers: "I'll provide 1 ETH for $50/day, 1-30 days"
-Taker Chooses: "I want it for 7 days = $350 total premium"
-Strike Price: Current market price when option is taken
+Traditional Options:  Fixed strike → Variable premium by time
+Duration.Finance:     Market strike → Daily rate × chosen duration
 ```
 
-### Key Features
+## 📖 User Stories
 
-- **Duration-Centric Model**: LPs set daily premiums, takers choose duration
-- **Dual Commitment System**: Both LP and Taker can create off-chain commitments
-- **Off-chain Commitment Storage**: Gas-efficient with on-chain verification only when taken
-- **100% Collateralization**: Every option fully backed by LP assets
-- **1inch Integration**: Real-time pricing and optimal settlement execution
-- **EIP-712 Signatures**: Secure off-chain commitment signing
-- **Simple Swap Optimization**: Immediate execution when price is better than expected
-- **Base Mini App Ready**: MiniKit integration with standard web app parity
+### 🏦 Liquidity Provider Story
+*"As a DeFi yield farmer, I want predictable returns from providing options liquidity"*
 
-## API Access & Security
+**Sarah the LP:**
+1. **Sets Daily Rate**: "I'll provide 1 ETH for $50/day premium"
+2. **Duration Flexibility**: "Accept 1-30 day duration, my choice on range"
+3. **Guaranteed Yield**: Gets $50 × actual days when taken
+4. **Market-Price Exit**: Receives current market price on exercise
+5. **Competitive Edge**: Lower daily rates attract more takers
 
-### Frontend Access (Free)
-The frontend application provides free access to all commitment creation and taking features for users interacting through the web interface.
+**Example LP Offer:**
+```
+Asset: 1 WETH
+Daily Premium: $50 USDC  
+Duration Range: 1-30 days
+LP Yield: ~1.74% daily / ~635% annualized
+```
 
-### API Access (x402 Payment Required)
-External API agents must use the x402 payment protocol to access commitment creation endpoints:
+### 📈 Option Taker Story  
+*"As a DeFi trader, I want flexible duration exposure without liquidation risk"*
 
-- **External API Endpoint**: `/api/x402/commitments` (requires $1 USDC payment)
-- **Internal API Endpoint**: `/api/commitments` (frontend only, blocked for external access)
-- **Payment Protocol**: HTTP 402 Payment Required with USDC settlement
-- **Security**: Multi-layered protection prevents bypass attempts
+**Alex the Taker:**
+1. **Duration Selection**: "I want 7-day ETH exposure"
+2. **Cost Transparency**: Pays $50 × 7 = $350 total premium
+3. **Market Entry**: Strike price = current ETH price when taken
+4. **Flexible Exercise**: Exercise anytime during 7 days if profitable
+5. **No Liquidation**: 100% collateralized, can't get liquidated
 
-#### x402 API Usage
+**Example Trade:**
+```
+Takes: 7-day ETH CALL at $3800 strike
+Premium: $350 ($50 × 7 days)
+Breakeven: $3835 (strike + premium per ETH)
+If ETH hits $4000: Profit = $165 ($200 - $35/ETH premium)
+Return: 47% in 7 days
+```
+
+### 🤖 Arbitrage Bot Story
+*"As an automated trader, I want programmatic access to duration markets"*
+
+**Bot the Algorithm:**
+1. **Market Scanning**: Monitors yield rates across duration ranges
+2. **x402 API Access**: Pays $1 USDC per commitment for API access
+3. **Yield Arbitrage**: Creates competitive LP offers at optimal rates
+4. **Delta Hedging**: Takes options to hedge spot positions
+5. **24/7 Operation**: Automated market making across all durations
+
+## 🏗️ Architecture
+
+### Duration-Centric Smart Contracts
+- **DurationOptionsCorrect.sol**: Main protocol with proper PUT/CALL mechanics
+- **OneInchSettlementRouter.sol**: Settlement integration with 1inch
+- **Duration marketplace**: Offchain commitments, onchain settlement
+- **EIP-712 Signatures**: Secure commitment verification
+
+### Revenue Model
+- **Frontend Users**: 100% free access to all features
+- **API Agents**: $1 USDC per commitment creation (x402 protocol)
+- **Settlement Fees**: 0.01% margin on 1inch settlements
+
+### Base Mini App Ready
+- **MiniKit Integration**: Native Farcaster auth and wallet
+- **Web App Parity**: Full desktop/mobile experience
+- **1inch Settlement**: Real-time pricing and execution
+
+## 🚀 Quick Start
+
+### For LPs (Yield Farmers)
 ```bash
-# External agents must use x402 endpoint with payment
-curl -X POST http://localhost:3001/api/x402/commitments \
-  -H "Content-Type: application/json" \
-  -H "X-Payment-Token: USDC" \
-  -H "X-Payment-Amount: 1000000" \
-  -d '{"commitment": "...", "signature": "..."}'
-
-# Reading commitments is free
-curl http://localhost:3001/api/x402/commitments
+# 1. Connect wallet to Duration.Finance
+# 2. Select asset and amount (min 0.1 WETH)
+# 3. Set daily premium rate ($1-100/day typical)
+# 4. Choose duration range (1-365 days)
+# 5. Sign commitment (free, offchain)
+# 6. Earn yield when taken
 ```
 
-#### Security Features
-- **User-Agent Detection**: Blocks common API tools (curl, postman, python-requests, etc.)
-- **Origin Validation**: Verifies requests come from allowed domains
-- **Rate Limiting**: Prevents abuse of internal endpoints
-- **IP Filtering**: Allowlist for internal access
-- **Payment Verification**: x402 protocol validation for external access
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 18+ 
-- Docker & Docker Compose
-- Foundry (for smart contracts)
-
-### Container Management
-
-The project includes convenient npm scripts for managing Docker containers:
-
-#### Development Environment
+### For Takers (Traders)
 ```bash
-# Start all dev containers (app, database, redis)
+# 1. Browse available duration liquidity
+# 2. Filter by cost/day, total cost, or yield
+# 3. Select optimal duration for strategy
+# 4. Pay premium × days
+# 5. Exercise when profitable
+```
+
+### For Developers
+```bash
+# Clone and setup
+git clone https://github.com/duration-finance/protocol
+cd duration.finance
+npm install
+
+# Start development environment
 npm run docker:dev
 
-# Start with rebuild (if you changed code)
-npm run docker:dev:build
-
-# Stop containers (keeps data)
-npm run docker:dev:stop
-
-# Restart containers (stop + start)
-npm run docker:dev:restart
-
-# View live logs
-npm run docker:dev:logs
-
-# Check container status
-npm run docker:dev:status
-
-# Completely remove containers (destroys data)
-npm run docker:dev:down
-```
-
-#### Production Environment
-```bash
-# Start production setup
-npm run docker:prod
-
-# Production with rebuild
-npm run docker:prod:build
-
-# Stop/restart production
-npm run docker:prod:stop
-npm run docker:prod:restart
-```
-
-#### Infrastructure Only
-```bash
-# Start just database + redis (useful for local development)
-npm run docker:infra
-
-# Stop just infrastructure
-npm run docker:infra:stop
-```
-
-#### Clean Everything
-```bash
-# Remove all containers and volumes (fresh start)
-npm run containers:clean
-```
-
-### Container Differences
-
-| Command | Effect | Data |
-|---------|--------|------|
-| `stop` | Pauses containers | ✅ Keeps all data |
-| `restart` | Stop + Start | ✅ Keeps all data |
-| `down` | Removes containers | ❌ Destroys data |
-| `down -v` | Removes + volumes | ❌ Destroys everything |
-
-**Recommendation**: Use `stop`/`start` for daily use, `down` only when you want a fresh database.
-
-### Access Points
-
-- **Development App**: http://localhost:3001
-- **Production App**: http://localhost:3000  
-- **Database**: localhost:5433 (dev) / localhost:5432 (prod)
-- **Redis**: localhost:6380 (dev) / localhost:6379 (prod)
-
-## Smart Contract Development
-
-### Build Contracts
-```bash
-forge build
-```
-
-### Run Tests
-```bash
+# Run tests
 forge test
+
+# Access
+# App: http://localhost:3001
+# API: http://localhost:3001/api/commitments (free for frontend)
+# x402: http://localhost:3001/api/x402/commitments ($1 USDC)
 ```
 
-### Format Code
-```bash
-forge fmt
+## 🔧 Option Settlement Mechanics
+
+### CALL Options (Bullish - expect price to rise)
+**At Taking:**
+- Contract receives WETH collateral from LP
+- Strike price locked at current market price
+- Premium paid to LP immediately
+
+**At Exercise (if price rose above strike):**
+- Contract sells WETH at current higher price via 1inch
+- Profit (current price - strike price) × amount → Option holder
+- Strike price equivalent in USDC → LP (collateral provider)
+
+### PUT Options (Bearish - expect price to drop)
+**At Taking:**
+- Contract receives WETH collateral from LP
+- **Contract immediately sells WETH → USDC** at strike price via 1inch
+- Contract holds USDC from sale + premium already paid to LP
+
+**At Exercise (if price dropped below strike):**
+- Contract buys WETH at current lower price via 1inch
+- Profit (strike price - current price) × amount → Option holder
+- Purchased WETH → LP (covers protocol liability)
+
+**At Expiry (if unprofitable - price rose/stayed same):**
+- Contract returns strike price USDC from original sale → LP
+- LP loses upside potential but gets premium + guaranteed USDC floor
+
+**LP PUT Economics:** LP trades WETH upside potential for immediate premium + guaranteed USDC floor price
+
+## 📊 Market Dynamics
+
+### Duration Competition
+LPs compete on **daily cost efficiency**:
+```
+LP A: $45/day (1.5% daily yield)
+LP B: $50/day (1.74% daily yield)  
+LP C: $55/day (1.91% daily yield)
+
+Takers naturally choose LP A for cost efficiency
 ```
 
-### Deploy Contracts
-```bash
-forge script script/DeployDurationFinance.s.sol:DeployDurationFinance \
-  --rpc-url $BASE_TESTNET_RPC_URL \
-  --private-key $DEPLOYER_PRIVATE_KEY \
-  --broadcast
+### Yield Transparency
+```sql
+-- Real-time yield calculations
+SELECT 
+  lp_address,
+  daily_premium_usdc / (amount * eth_price) * 100 as daily_yield_percent,
+  daily_yield_percent * 365 as annualized_yield
+FROM commitments 
+ORDER BY daily_yield_percent DESC;
 ```
 
-### Test Integration
-```bash
-# Test complete liquidation functionality
-./test-liquidation.sh
+### Market Making Benefits
+- **LP Competition**: Drives down costs for takers
+- **Duration Flexibility**: Optimal capital efficiency
+- **Risk Management**: 100% collateralization eliminates liquidations
+- **Price Discovery**: Market-driven daily rates
 
-# Test real 1inch integration
-./test-1inch-integration.sh
-```
-
-## Economic Model
-
-### LP Revenue Streams
-1. **USDC Premium**: Received when taker takes commitment
-2. **Target Price Execution**: Get desired price on profitable exercise
-3. **Asset Return**: Get collateral back if option expires worthless
-4. **Simple Swap Benefit**: Better-than-expected execution at market price
-
-### Taker Benefits
-1. **Duration Flexibility**: Choose exact duration needed (1-365 days)
-2. **Market Strike Price**: Strike set at current price when commitment taken
-3. **Predictable Costs**: Lock in premium cost upfront via daily rate × duration
-4. **Standard Exercise Rights**: Exercise when profitable
-
-### Protocol Revenue (DUR Token)
-1. **x402 API Fees**: $1 USDC per commitment created via external API endpoints
-2. **Safety Margin Fees**: 0.01% on all 1inch settlements (governance adjustable)
-3. **Slippage Capture**: Favorable execution vs quoted prices
-4. **Simple Swap Profits**: Current price - LP target price differential
-5. **Buy-back Arbitrage**: Profit from buying assets cheaper than forward price
-
-**Important**: Frontend users pay NO fees for commitment creation or taking. The $1 fee applies ONLY to external API agents using the `/api/x402/commitments` endpoint.
-
-### DUR Governance Token
-- **Backing**: 99.99% ETH-backed at all times (Will.sol mechanics)
-- **Price Discovery**: Based on ETH backing ratio
-- **Governance**: Safety margin setting, multicall authority (80%+ holders)
-- **Revenue Distribution**: All protocol profits automatically flow to token contract
-
-## Deployed Contracts
+## 🔗 Contract Addresses
 
 ### Base Sepolia (Testnet)
-- **DurationOptions**: `0xae24A63598182C0fa52583e443D8A9828AB1FA81`
-- **OneInchSettlementRouter**: `0x5cAF691351bD7989b681228aF3DEB82F2a562DBC`
+```
+DurationOptionsUnified:   0x445204d7A819e5e34F74c83787e7F379F29E5D8E (Legacy - basic mechanics)
+DurationOptionsCorrect:   0x9FC6E5Ff91D2be55b9ee25eD5b64DFB1020eBC44 (In progress - full PUT mechanics)
+OneInchRouter:           0x111111125421cA6dc452d289314280a0f8842A65
+SettlementRouter:        0x35897A4DF878B290610d3dd893474C98c785b1Ed
+```
 
 ### Base Mainnet
-- **1inch Router**: `0x111111125421cA6dc452d289314280a0f8842A65`
-- **WETH**: `0x4200000000000000000000000000000000000006`
-- **USDC**: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
-
-## Protocol Architecture
-
-### Core Contracts
-- **DurationOptions.sol**: Main options protocol with duration-centric logic
-- **OneInchSettlementRouter.sol**: 1inch settlement integration layer
-- **IDurationOptions.sol**: Interface definitions and structs
-- **DurationToken.sol**: DUR governance token (Will.sol based)
-
-### Key Innovation: Off-Chain Commitments
-- **Off-Chain Storage**: LP commitments stored in database with EIP-712 signatures
-- **On-Chain Verification**: Signature and asset validation only when commitment is taken
-- **Asset Checking**: Real-time validation of LP balance and allowances
-- **Database Cleanup**: Automated removal of invalid/expired commitments
-- **Commitment Cancellation**: LPs can cancel their own commitments before being taken
-
-### Settlement & Revenue
-- **1inch Integration**: Optimal execution via Limit Order Protocol, UnoswapRouter, GenericRouter
-- **Simple Swap Mechanism**: Immediate execution when current price > LP target price
-- **Revenue Capture**: Safety margins, slippage differentials, buy-back arbitrage
-- **DUR Token Distribution**: All protocol profits flow to governance token holders
-
-## Frontend Development
-
-### Start Development Server
-```bash
-npm run dev
+```
+WETH: 0x4200000000000000000000000000000000000006
+USDC: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+OneInchRouter: 0x111111125421cA6dc452d289314280a0f8842A65
 ```
 
-### Build for Production
-```bash
-npm run build
-npm start
-```
+## 📚 Documentation
 
-### Lint Code
-```bash
-npm run lint
-```
+Complete documentation moved to `misc-md/`:
+- **Economic Model**: `misc-md/ECONOMIC_SPECIFICATION.md`
+- **1inch Integration**: `misc-md/1INCH_INTEGRATION_GUIDE.md`
+- **x402 API System**: `misc-md/X402-IMPLEMENTATION.md`
+- **Technical Specs**: `misc-md/SPECIFICATIONS.md`
 
-## Wallet Integration
+## 🔮 Duration Marketplace Vision
 
-Duration.Finance supports multiple wallet options through OnchainKit and Wagmi:
+Duration.Finance transforms options from **strike-centric** to **duration-centric** markets:
 
-### Supported Wallets
+### Traditional Options Problems:
+- Complex strike price selection
+- Time decay uncertainty  
+- Limited duration flexibility
+- Liquidation risks
 
-| Wallet | Type | Description |
-|--------|------|-------------|
-| **Coinbase Wallet** | Built-in | Recommended for Base chain |
-| **MetaMask** | Browser Extension | Most popular Ethereum wallet |
-| **WalletConnect** | Protocol | Connect 100+ mobile wallets |
-| **Injected Wallets** | Browser Extensions | Rainbow, Trust Wallet, etc. |
+### Duration.Finance Solutions:
+- **Market-price strikes**: Always current market entry
+- **Transparent duration costs**: Daily rate × chosen days
+- **Flexible duration selection**: 1-365 day granularity
+- **Zero liquidation risk**: 100% collateralized
 
-### Wallet UI Behavior
-
-- **Mini App Environment**: Shows single ConnectWallet button (OnchainKit default)
-- **Web Environment**: Shows all 4 wallet options in a grid layout
-- **Auto-detection**: Automatically detects available browser extension wallets
-
-### Configuration
-
-1. **Default Setup**: Works out-of-the-box with all major wallets
-2. **WalletConnect**: Add project ID to enable mobile wallet support:
-   ```env
-   NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your-project-id
-   ```
-   Get your project ID from [WalletConnect Cloud](https://cloud.walletconnect.com)
-
-## Environment Configuration
-
-Copy `.env.example` to `.env` and configure:
-
-```env
-# Smart Contract Deployment
-DEPLOYER_PRIVATE_KEY=0x...
-BASE_TESTNET_RPC_URL=https://...
-BASE_RPC_URL=https://mainnet.base.org
-
-# 1inch Integration
-ONEINCH_API_KEY=...
-ONEINCH_API_URL=https://api.1inch.dev
-
-# Database
-DATABASE_URL=postgresql://...
-
-# Contract Addresses
-NEXT_PUBLIC_DURATION_OPTIONS_ADDRESS=0x...
-NEXT_PUBLIC_DURATION_OPTIONS_ADDRESS_BASE_SEPOLIA=0xae24A63598182C0fa52583e443D8A9828AB1FA81
-
-# API Security
-ADMIN_API_KEY=your-admin-key-for-cleanup-endpoints
-INTERNAL_API_KEY=your-internal-api-key-for-frontend
-SECURITY_STRICT_MODE=true
-ENABLE_IP_VALIDATION=true
-ENABLE_ORIGIN_VALIDATION=true
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://duration.finance
-ALLOWED_IPS=127.0.0.1,::1,localhost
-
-# x402 Payment Configuration
-X402_ENABLED=true
-X402_COST_USDC=1
-X402_RECIPIENT_ADDRESS=0x...
-X402_CHAIN_ID=84532
-
-# Wallet Integration (optional)
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your-walletconnect-project-id
-```
-
-## Testing
-
-### Smart Contract Tests
-```bash
-# Run all tests
-forge test
-
-# Run specific test file
-forge test --match-path test/DurationOptions.t.sol
-
-# Run specific test function
-forge test --match-test testTakeCommitment
-
-# Run with verbosity
-forge test -vvv
-
-# Test with gas reporting
-forge test --gas-report
-```
-
-### Test Coverage
-- **DurationOptions.sol**: Complete option lifecycle (commitment → taking → exercise)
-- **OneInchIntegration**: Pricing, premium calculation, yield metrics
-- **ExpiredOptions**: Liquidation and cleanup mechanisms
-- **SettlementVerification**: Collateralization and owner functions
-
-### API Testing
-
-#### Frontend API (Internal Access)
-```bash
-# Test with browser-like headers (works)
-curl -X GET http://localhost:3001/api/commitments \
-  -H "User-Agent: Mozilla/5.0" \
-  -H "Origin: http://localhost:3001"
-
-# Test with API tool (blocked)
-curl -X GET http://localhost:3001/api/commitments
-# Returns: {"error":"Access Denied","alternativeEndpoint":"/api/x402/commitments"}
-```
-
-#### x402 API (External Access)
-```bash
-# Create commitment with payment (requires actual USDC payment)
-curl -X POST http://localhost:3001/api/x402/commitments \
-  -H "Content-Type: application/json" \
-  -d '{"lp":"0x...","signature":"0x..."}'
-
-# Read commitments (free)
-curl -X GET http://localhost:3001/api/x402/commitments
-
-# Test commitment cleanup
-curl -X POST http://localhost:3001/api/commitments/cleanup \
-  -H "Authorization: Bearer ${ADMIN_API_KEY}"
-```
-
-## Project Structure
-
-```
-duration.finance/
-├── src/                          # Solidity contracts
-│   ├── DurationOptions.sol       # Main options protocol
-│   ├── settlement/               # 1inch integration
-│   └── interfaces/               # Contract interfaces
-├── app/                          # Next.js frontend
-│   ├── components/               # React components
-│   │   ├── LPCommitmentForm.tsx  # Create LP commitments
-│   │   ├── LPCommitmentList.tsx  # View/cancel commitments
-│   │   └── WalletConnection.tsx  # Multi-wallet support
-│   └── api/                      # API routes
-│       ├── commitments/          # Internal API (frontend only)
-│       └── x402/                 # External API (payment required)
-│           └── commitments/      # x402 protected endpoints
-├── lib/                          # Shared utilities
-│   ├── eip712/                   # EIP-712 signature verification
-│   └── database/                 # Commitment storage & validation
-├── test/                         # Solidity tests
-└── 1inch-integration.md          # 1inch integration guide
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `forge test && npm test`
-5. Update documentation if needed
-6. Submit a pull request
-
-### Development Guidelines
-- **Smart Contracts**: Follow NatSpec documentation standards
-- **Frontend**: Use TypeScript with strict mode
-- **API**: Implement proper error handling and validation
-- **Testing**: Maintain test coverage for all new features
-
-## Key Files Reference
-
-- **CLAUDE.md**: Complete project documentation and development guidelines
-- **1inch-integration.md**: Detailed 1inch integration specification
-- **farcaster.json**: Mini app manifest for Base integration
-- **.env.example**: Environment configuration template
-
-## Links
-
-- **Documentation**: https://docs.duration.finance
-- **Mini App**: Available in Base App directory
-- **GitHub**: https://github.com/duration-finance/protocol
-- **Discord**: https://discord.gg/duration-finance
-
-## License
-
-MIT License - see LICENSE file for details.
+This creates a **sustainable marketplace** where LPs earn predictable yields and takers get optimal duration exposure with full capital protection.
 
 ---
 
-## Foundry Documentation
+## 🚧 Current Development Status
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+### ✅ Completed Features
+- **Duration-Centric UI**: Complete frontend with duration selection and yield display
+- **EIP-712 Commitments**: Secure offchain commitment signing system
+- **Database Layer**: PostgreSQL schema for duration marketplace
+- **API Security**: x402 payment system for external API access
+- **Settlement Logic**: Smart contracts with proper CALL/PUT mechanics
+- **Base Sepolia Testing**: Deployed and tested on Base testnet
 
-Foundry consists of:
+### 🔄 Active Development  
+- **Contract Deployment**: Finalizing `DurationOptionsCorrect.sol` deployment with gas funding
+- **1inch Integration**: Full settlement router implementation
+- **Contract Verification**: BaseScan verification for transparency
+- **Mainnet Preparation**: Security review and gas optimization
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+### 📋 Next Steps
+1. **Deploy Corrected Contract**: Complete deployment with proper gas funding
+2. **Contract Verification**: Verify on BaseScan for public code review
+3. **Frontend Integration**: Connect UI to corrected contract
+4. **Base Mainnet**: Production deployment after thorough testing
+5. **Base Mini App**: Complete MiniKit integration for Farcaster ecosystem
 
-### Documentation
+---
 
-https://book.getfoundry.sh/
+**Built on Base** • **Powered by 1inch** • **Secured by Full Collateralization**
 
-### Additional Foundry Commands
-
-```shell
-# Generate gas snapshots
-forge snapshot
-
-# Start local node
-anvil
-
-# Deploy with script
-forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-
-# Cast utilities
-cast <subcommand>
-
-# Help
-forge --help
-anvil --help
-cast --help
-```
+[Documentation](./misc-md/) • [GitHub](https://github.com/duration-finance) • [Base App](https://base.org/apps)

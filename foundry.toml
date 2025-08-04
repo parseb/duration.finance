@@ -17,6 +17,7 @@ fs_permissions = [
 
 optimizer = true
 optimizer_runs = 200
+via_ir = true
 
 [profile.default.model_checker]
 contracts = { "src/DurationToken.sol" = ["DurationToken"], "src/DurationOptions.sol" = ["DurationOptions"] }

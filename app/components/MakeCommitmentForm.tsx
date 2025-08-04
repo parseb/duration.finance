@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
-import { useAccount, useSignTypedData, useChainId } from 'wagmi';
-import { parseEther, parseUnits } from 'viem';
-import { SignedOptionCommitment, OptionCommitment, CommitmentType, OptionType, DURATION_DOMAIN, COMMITMENT_TYPES } from '../../lib/eip712/verification';
+import { useAccount, useSignTypedData, useChainId, useReadContract } from 'wagmi';
+import { parseEther, parseUnits, formatEther, formatUnits } from 'viem';
+import { SignedOptionCommitment, OptionCommitment, LPCommitment, UnifiedCommitment, CommitmentType, OptionType, DURATION_DOMAIN, COMMITMENT_TYPES, LP_COMMITMENT_TYPES, UNIFIED_COMMITMENT_TYPES } from '../../lib/eip712/verification';
 import { useWethPrice } from '../../hooks/use-prices';
+import { USDCApprovalCheck } from './USDCApprovalCheck';
+import { AssetApprovalCheck } from './AssetApprovalCheck';
 
 interface MakeCommitmentFormProps {
   onSuccess?: (commitmentId: string) => void;
@@ -34,8 +36,50 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
   const [optionType, setOptionType] = useState<'CALL' | 'PUT'>('CALL');
   const [commitmentType, setCommitmentType] = useState<'OFFER' | 'DEMAND'>('OFFER');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pendingCommitment, setPendingCommitment] = useState<OptionCommitment | null>(null);
+  const [pendingCommitment, setPendingCommitment] = useState<UnifiedCommitment | null>(null);
+  const [commitmentCreated, setCommitmentCreated] = useState(false);
   
+  // Contract and token addresses
+  const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as `0x${string}`; // Base WETH
+  const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as `0x${string}`; // Base Sepolia USDC
+  const contractAddress = (
+    process.env.NEXT_PUBLIC_DURATION_OPTIONS_ADDRESS_BASE_SEPOLIA ||
+    process.env.NEXT_PUBLIC_DURATION_OPTIONS_ADDRESS_BASE ||
+    '0x8cD578CfaF2139A315F3ac4E76E42de3F571CF6D'
+  ) as `0x${string}`;
+  
+  // Check WETH balance for OFFER commitments
+  const { data: wethBalance } = useReadContract({
+    address: WETH_ADDRESS,
+    abi: [
+      {
+        name: 'balanceOf',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [{ name: 'account', type: 'address' }],
+        outputs: [{ name: '', type: 'uint256' }]
+      }
+    ],
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+  });
+  
+  // Check USDC balance for DEMAND commitments  
+  const { data: usdcBalance } = useReadContract({
+    address: USDC_ADDRESS,
+    abi: [
+      {
+        name: 'balanceOf',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [{ name: 'account', type: 'address' }],
+        outputs: [{ name: '', type: 'uint256' }]
+      }
+    ],
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+  });
+
   // Get real-time WETH price from our pricing API
   const currentPrice = wethPrice?.price || 3836.50; // Fallback to last known price
   const amountNum = parseFloat(amount) || 0;
@@ -62,14 +106,27 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
   const MAX_WETH = 1;
   const MIN_PREMIUM = 0.01;
   
-  // Enhanced validation including proper address check
+  // Check if user has sufficient balance
+  const wethBalanceNum = wethBalance ? Number(formatEther(wethBalance)) : 0;
+  const usdcBalanceNum = usdcBalance ? Number(formatUnits(usdcBalance, 6)) : 0;
+  
+  const hasSufficientBalance = isOffer 
+    ? wethBalanceNum >= amountNum  // LP needs WETH for collateral
+    : usdcBalanceNum >= premiumNum; // Taker needs USDC for premium
+    
+  const insufficientBalanceMessage = isOffer 
+    ? `Insufficient WETH balance. You have ${wethBalanceNum.toFixed(4)} WETH but need ${amountNum} WETH`
+    : `Insufficient USDC balance. You have ${usdcBalanceNum.toFixed(2)} USDC but need ${premiumNum} USDC`;
+  
+  // Enhanced validation including proper address check and balance check
   const isValid = 
     amountNum >= MIN_WETH && amountNum <= MAX_WETH &&
     premiumNum >= MIN_PREMIUM &&
     minDuration >= 1 && maxDuration <= 365 &&
     minDuration <= maxDuration &&
     isConnected &&
-    validAddress !== null;
+    validAddress !== null &&
+    hasSufficientBalance;
 
   // Handle signature completion and API submission
   useEffect(() => {
@@ -89,26 +146,21 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
   }, [signError, onError]);
 
   // Submit signed commitment to API
-  const submitCommitmentToAPI = async (commitmentData: OptionCommitment, signature: `0x${string}`) => {
+  const submitCommitmentToAPI = async (commitmentData: UnifiedCommitment, signature: `0x${string}`) => {
     try {
-      const commitment: SignedOptionCommitment = {
-        ...commitmentData,
-        signature,
-      };
-
-      // Convert BigInt values to strings for JSON serialization
+      // Convert UnifiedCommitment to the format expected by the API
       const commitmentForAPI = {
-        creator: commitment.creator,
-        asset: commitment.asset,
-        amount: commitment.amount.toString(),
-        premiumAmount: commitment.premiumAmount.toString(),
-        minDurationDays: commitment.minDurationDays.toString(),
-        maxDurationDays: commitment.maxDurationDays.toString(),
-        optionType: commitment.optionType,
-        commitmentType: commitment.commitmentType,
-        expiry: commitment.expiry.toString(),
-        nonce: commitment.nonce.toString(),
-        signature: commitment.signature,
+        creator: commitmentData.creator,
+        asset: commitmentData.asset,
+        amount: commitmentData.amount.toString(),
+        dailyPremiumUsdc: commitmentData.premiumAmount.toString(),
+        minLockDays: commitmentData.minDuration.toString(),
+        maxDurationDays: commitmentData.maxDuration.toString(),
+        optionType: commitmentData.optionType,
+        commitmentType: commitmentData.commitmentType,
+        expiry: commitmentData.expiry.toString(),
+        nonce: commitmentData.nonce.toString(),
+        signature: signature,
       };
 
       // Debug the final payload
@@ -131,11 +183,17 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
       const result = await response.json();
       onSuccess?.(result.commitmentId);
       
-      // Reset form state
-      setAmount('');
-      setPremiumAmount('');
-      setDurationRange([1, 7]);
-      setPendingCommitment(null);
+      // Show success state
+      setCommitmentCreated(true);
+      
+      // Reset form state after showing success
+      setTimeout(() => {
+        setAmount('');
+        setPremiumAmount('');
+        setDurationRange([1, 7]);
+        setPendingCommitment(null);
+        setCommitmentCreated(false);
+      }, 3000); // Show success for 3 seconds
       
     } catch (error) {
       console.error('Failed to create commitment:', error);
@@ -186,39 +244,67 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
       const expiry = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours from now
       const nonce = Math.floor(Math.random() * 1000000); // Random nonce
 
-      // Create the commitment data for signing
-      const commitmentData: OptionCommitment = {
+      // Create the commitment data for signing using UnifiedCommitment format
+      const commitmentData: UnifiedCommitment = {
         creator: validAddress as `0x${string}`,
         asset: WETH_BASE as `0x${string}`,
         amount: parseEther(amount),
-        premiumAmount: parseUnits(premiumAmount, 6), // USDC has 6 decimals
-        minDurationDays: BigInt(minDuration),
-        maxDurationDays: BigInt(maxDuration),
+        premiumAmount: parseUnits(premiumAmount, 6), // For DEMAND: total premium willing to pay, For OFFER: daily rate
+        minDuration: BigInt(minDuration),
+        maxDuration: BigInt(maxDuration),
         optionType: optionType === 'CALL' ? OptionType.CALL : OptionType.PUT,
-        commitmentType: commitmentType === 'OFFER' ? CommitmentType.LP_OFFER : CommitmentType.TAKER_DEMAND,
+        commitmentType: commitmentType === 'OFFER' ? CommitmentType.OFFER : CommitmentType.DEMAND,
         expiry: BigInt(expiry),
         nonce: BigInt(nonce),
       };
 
-      // Get the correct domain for the current chain
+      // Use the exact same domain and types as the contract expects
       const domain = {
-        ...DURATION_DOMAIN,
-        chainId: chainId,
-        verifyingContract: (process.env.NEXT_PUBLIC_DURATION_OPTIONS_ADDRESS_BASE_SEPOLIA || '0x0') as `0x${string}`,
+        name: 'DurationOptions',
+        version: '1.0',
+        chainId: 84532, // Base Sepolia
+        verifyingContract: contractAddress,
+      };
+
+      // Convert to the exact structure the contract expects
+      const contractMessage = {
+        creator: commitmentData.creator,
+        asset: commitmentData.asset,
+        amount: commitmentData.amount,
+        dailyPremiumUsdc: commitmentData.premiumAmount,
+        minLockDays: commitmentData.minDuration,
+        maxDurationDays: commitmentData.maxDuration,
+        optionType: commitmentData.optionType,
+        commitmentType: commitmentData.commitmentType,
+        expiry: commitmentData.expiry,
+        nonce: commitmentData.nonce,
       };
 
       console.log('Debug - About to sign with domain:', domain);
-      console.log('Debug - Commitment data:', commitmentData);
+      console.log('Debug - Contract message:', contractMessage);
 
       // Store commitment data and initiate signing
       setPendingCommitment(commitmentData);
       
-      // Sign the commitment using the wallet
+      // Sign using the exact same structure as the contract
       signTypedData({
         domain,
-        types: COMMITMENT_TYPES,
-        primaryType: 'OptionCommitment',
-        message: commitmentData,
+        types: {
+          Commitment: [
+            { name: 'creator', type: 'address' },
+            { name: 'asset', type: 'address' },
+            { name: 'amount', type: 'uint256' },
+            { name: 'dailyPremiumUsdc', type: 'uint256' },
+            { name: 'minLockDays', type: 'uint256' },
+            { name: 'maxDurationDays', type: 'uint256' },
+            { name: 'optionType', type: 'uint8' },
+            { name: 'commitmentType', type: 'uint8' },
+            { name: 'expiry', type: 'uint256' },
+            { name: 'nonce', type: 'uint256' },
+          ],
+        },
+        primaryType: 'Commitment',
+        message: contractMessage,
       });
     } catch (error) {
       console.error('Failed to prepare commitment:', error);
@@ -305,21 +391,6 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
           </div>
         </div>
         
-        {/* Wallet Status Debug */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="bg-gray-800 rounded-lg p-3 mb-6 text-xs">
-            <div className="text-gray-300">Debug Info:</div>
-            <div className="text-gray-400">Connected: {isConnected ? 'Yes' : 'No'}</div>
-            <div className="text-gray-400">Chain ID: {chainId}</div>
-            <div className="text-gray-400">Raw Address: {address || 'undefined'}</div>
-            <div className="text-gray-400">Valid Address: {validAddress || 'null'}</div>
-            <div className="text-gray-400">Form Valid: {isValid ? 'Yes' : 'No'}</div>
-            <div className="text-gray-400">Signing: {isSigning ? 'Yes' : 'No'}</div>
-            <div className="text-gray-400">Has Signature: {signature ? 'Yes' : 'No'}</div>
-            <div className="text-gray-400">Pending Commitment: {pendingCommitment ? 'Yes' : 'No'}</div>
-            {signError && <div className="text-red-400">Sign Error: {signError.message}</div>}
-          </div>
-        )}
         
         <div className="space-y-4">
           {/* Option Type and Commitment Type Toggle Buttons */}
@@ -507,22 +578,89 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
           
         </div>
         
-        <button 
-          type="submit"
-          disabled={!isValid || isSubmitting || isSigning}
-          className="w-full mt-8 py-4 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 hover:shadow-lg disabled:transform-none disabled:shadow-none shadow-lg shadow-orange-500/30"
-        >
-          <div className="flex items-center justify-center space-x-2">
-            <span className="text-xl">
-              {isSigning ? '✍️' : isSubmitting ? '⚡' : commitmentType === 'OFFER' ? '🎯' : '🚀'}
-            </span>
-            <span>
-              {isSigning ? 'Please sign in wallet...' : 
-               isSubmitting ? 'Creating Commitment...' : 
-               `Create ${commitmentType} Commitment`}
-            </span>
-          </div>
-        </button>
+        {/* Asset Approval Check - depends on commitment type */}
+        {commitmentType === 'OFFER' ? (
+          // ALL OFFERS need WETH approval (LP provides WETH collateral)
+          <AssetApprovalCheck
+            assetAddress={WETH_ADDRESS}
+            spenderAddress={contractAddress}
+            requiredAmount={parseEther(amount || '0')}
+            assetSymbol="WETH"
+            onApprovalConfirmed={() => console.log('WETH approval confirmed')}
+          >
+            {({ needsApproval, isApproving, handleApprove, error: approvalError }) => (
+              <button 
+                type={needsApproval ? "button" : "submit"}
+                onClick={needsApproval ? handleApprove : undefined}
+                disabled={!isValid || isSubmitting || isSigning || isApproving || commitmentCreated}
+                className={`w-full mt-8 py-4 font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 hover:shadow-lg disabled:transform-none disabled:shadow-none shadow-lg ${
+                  commitmentCreated 
+                    ? 'bg-gradient-to-r from-green-500 to-emerald-500 shadow-green-500/30 cursor-default'
+                    : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed shadow-orange-500/30'
+                } text-white`}
+              >
+                <div className="flex items-center justify-center space-x-2">
+                  <span className="text-xl">
+                    {commitmentCreated ? '✅' :
+                     isApproving ? '⏳' : 
+                     isSigning ? '✍️' : 
+                     isSubmitting ? '⚡' : 
+                     needsApproval ? '🔑' : '🎯'}
+                  </span>
+                  <span>
+                    {commitmentCreated ? `${commitmentType} Created Successfully!` :
+                     isApproving ? 'Approving WETH...' :
+                     isSigning ? 'Please sign in wallet...' : 
+                     isSubmitting ? 'Creating Commitment...' : 
+                     needsApproval ? `Approve ${amount || '0'} WETH` :
+                     `Create ${commitmentType} Commitment`}
+                  </span>
+                </div>
+                {approvalError && (
+                  <div className="mt-2 text-sm text-red-300">{approvalError}</div>
+                )}
+              </button>
+            )}
+          </AssetApprovalCheck>
+        ) : (
+          // ALL DEMANDS need USDC approval (Taker pays premium upfront)
+          <USDCApprovalCheck
+            spenderAddress={contractAddress}
+            requiredAmount={parseUnits(premiumAmount || '0', 6)}
+            onApprovalConfirmed={() => console.log('USDC approval confirmed')}
+          >
+            {({ needsApproval, isApproving, handleApprove, approvalSuccess }) => (
+              <button 
+                type={needsApproval ? "button" : "submit"}
+                onClick={needsApproval ? handleApprove : undefined}
+                disabled={!isValid || isSubmitting || isSigning || isApproving || commitmentCreated}
+                className={`w-full mt-8 py-4 font-bold rounded-2xl transition-all duration-300 transform hover:scale-105 hover:shadow-lg disabled:transform-none disabled:shadow-none shadow-lg ${
+                  commitmentCreated 
+                    ? 'bg-gradient-to-r from-green-500 to-emerald-500 shadow-green-500/30 cursor-default'
+                    : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed shadow-orange-500/30'
+                } text-white`}
+              >
+                <div className="flex items-center justify-center space-x-2">
+                  <span className="text-xl">
+                    {commitmentCreated ? '✅' :
+                     isApproving ? '⏳' : 
+                     isSigning ? '✍️' : 
+                     isSubmitting ? '⚡' : 
+                     needsApproval ? '🔑' : '🚀'}
+                  </span>
+                  <span>
+                    {commitmentCreated ? `${commitmentType} Created Successfully!` :
+                     isApproving ? 'Approving USDC...' :
+                     isSigning ? 'Please sign in wallet...' : 
+                     isSubmitting ? 'Creating Commitment...' : 
+                     needsApproval ? `Approve $${premiumAmount || '0'} USDC` :
+                     `Create ${commitmentType} Commitment`}
+                  </span>
+                </div>
+              </button>
+            )}
+          </USDCApprovalCheck>
+        )}
 
         {!isConnected && (
           <div className="mt-6 p-4 bg-gradient-to-r from-red-600/20 to-pink-600/20 border border-red-500/50 rounded-2xl backdrop-blur-sm">
@@ -538,6 +676,19 @@ export function MakeCommitmentForm({ onSuccess, onError }: MakeCommitmentFormPro
               ⚠️ Wallet connection issue detected. Please disconnect and reconnect your wallet.
               {address && <span className="block text-xs mt-2 opacity-75">Current address: {address}</span>}
             </p>
+          </div>
+        )}
+        
+        {isConnected && validAddress && !hasSufficientBalance && amountNum > 0 && (
+          <div className="mt-6 p-4 bg-gradient-to-r from-red-600/20 to-pink-600/20 border border-red-500/50 rounded-2xl backdrop-blur-sm">
+            <p className="text-red-300 text-sm font-medium">
+              💰 {insufficientBalanceMessage}
+            </p>
+            {isOffer && (
+              <p className="text-red-300 text-xs mt-2 opacity-75">
+                You can wrap ETH to WETH at the WETH contract: {WETH_ADDRESS}
+              </p>
+            )}
           </div>
         )}
       </div>
